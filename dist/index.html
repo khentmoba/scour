@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Scour</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">S</div>
+        <div>
+          <div class="brand-name">Scour</div>
+          <div class="brand-sub">disk hygiene</div>
+        </div>
+      </div>
+
+      <nav class="nav" id="nav">
+        <button class="nav-item active" data-view="clean"><span class="nav-ico">✦</span> Clean</button>
+        <button class="nav-item" data-view="analyze"><span class="nav-ico">◫</span> Analyze</button>
+        <button class="nav-item" data-view="status"><span class="nav-ico">◉</span> Status</button>
+        <button class="nav-item" data-view="optimize"><span class="nav-ico">↻</span> Optimize</button>
+      </nav>
+
+      <div class="sidebar-foot">
+        <div class="engine-line"><span class="dot" id="engine-dot"></span><span id="engine-label">engine: checking…</span></div>
+        <button class="nav-item small" data-view="about"><span class="nav-ico">ⓘ</span> About</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <!-- CLEAN -->
+      <section class="view active" id="view-clean">
+        <header class="view-head">
+          <div>
+            <div class="eyebrow">REVIEW FIRST</div>
+            <h1>Clean</h1>
+            <p class="lead">Scan for disposable files, tick what you trust, then delete only that list.</p>
+          </div>
+          <button class="btn primary" id="scan-clean">Scan for junk</button>
+        </header>
+
+        <div class="cards" id="clean-summary">
+          <div class="card"><div class="card-label">Candidates</div><div class="card-value" id="sum-count">—</div></div>
+          <div class="card"><div class="card-label">Reclaimable</div><div class="card-value" id="sum-size">—</div></div>
+          <div class="card"><div class="card-label">Selected</div><div class="card-value" id="sum-selected">0</div></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Cleanup candidates</h2>
+            <button class="btn ghost small" id="select-all" disabled>Select all</button>
+          </div>
+          <div id="clean-list" class="list">
+            <div class="empty">Run a scan to see what can be cleaned.</div>
+          </div>
+          <div class="panel-foot">
+            <span class="hint" id="delete-mode">Deletes go to the Recycle Bin — nothing is permanent.</span>
+            <button class="btn danger" id="apply-clean" disabled>Clean selected</button>
+          </div>
+        </div>
+
+        <div class="panel" id="result-panel" hidden>
+          <div class="panel-head"><h2>Last run</h2><span class="pill" id="result-status">—</span></div>
+          <pre class="log" id="result-log"></pre>
+        </div>
+      </section>
+
+      <!-- ANALYZE -->
+      <section class="view" id="view-analyze">
+        <header class="view-head">
+          <div>
+            <div class="eyebrow">DISK USAGE</div>
+            <h1>Analyze</h1>
+            <p class="lead">See which folders are taking up the most space.</p>
+          </div>
+        </header>
+        <div class="panel">
+          <div class="path-row">
+            <input id="analyze-path" type="text" spellcheck="false" placeholder="C:\Users\You\Downloads" />
+            <button class="btn primary" id="scan-analyze">Analyze folder</button>
+          </div>
+          <div id="analyze-list" class="list">
+            <div class="empty">Choose a folder and run the analysis.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- STATUS -->
+      <section class="view" id="view-status">
+        <header class="view-head">
+          <div>
+            <div class="eyebrow">SYSTEM</div>
+            <h1>Status</h1>
+            <p class="lead">A snapshot from the engine. Some probes are platform-specific.</p>
+          </div>
+          <button class="btn primary" id="refresh-status">Refresh</button>
+        </header>
+        <div class="cards" id="status-cards"></div>
+        <pre class="log" id="status-raw"></pre>
+      </section>
+
+      <!-- OPTIMIZE -->
+      <section class="view" id="view-optimize">
+        <header class="view-head">
+          <div>
+            <div class="eyebrow">MAINTENANCE</div>
+            <h1>Optimize</h1>
+            <p class="lead">Preview the maintenance tasks the engine knows about.</p>
+          </div>
+          <button class="btn primary" id="preview-optimize">Preview tasks</button>
+        </header>
+        <div id="optimize-list" class="list">
+          <div class="empty">Preview to see available tasks.</div>
+        </div>
+      </section>
+
+      <!-- ABOUT -->
+      <section class="view" id="view-about">
+        <header class="view-head">
+          <div>
+            <div class="eyebrow">ABOUT</div>
+            <h1>Scour</h1>
+            <p class="lead">A small, review-first cleaner for Windows, built on the Burrow engine.</p>
+          </div>
+        </header>
+        <div class="panel prose">
+          <p>Scour never deletes on its own. A scan produces a list, you choose from it, and Scour moves exactly that list to the Recycle Bin. The engine's own delete command is macOS-only, so Windows cleanup is handled here.</p>
+          <p>The bundled <code>burrow-engine</code> is © 2026 caezium and licensed under <strong>FSL-1.1-ALv2</strong> (see <code>src-tauri/binaries/LICENSE.md</code>). Scour's own code is MIT licensed.</p>
+          <p class="hint">Version <span id="about-version">—</span></p>
+        </div>
+      </section>
+
+      <div class="toast" id="toast" hidden></div>
+    </main>
+  </div>
+
+  <dialog id="confirm-dialog" class="confirm">
+    <form method="dialog">
+      <h2>Delete selected files?</h2>
+      <p id="confirm-text"></p>
+      <div class="dialog-actions">
+        <button class="btn ghost" value="cancel">Cancel</button>
+        <button class="btn danger" id="confirm-yes" value="yes">Yes, delete</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
