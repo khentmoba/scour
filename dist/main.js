@@ -141,6 +141,7 @@ $('apply-clean').addEventListener('click', async () => {
   const total = [...selected].reduce((s, i) => s + (candidates[i].size || 0), 0);
   $('confirm-text').textContent = `${paths.length} item(s), about ${fmt(total)}, will be moved to the Recycle Bin. Only these exact paths are deleted.`;
   const dlg = $('confirm-dialog');
+  dlg.returnValue = '';
   dlg.showModal();
   const choice = await new Promise((resolve) => {
     dlg.addEventListener('close', () => resolve(dlg.returnValue), { once: true });
@@ -154,13 +155,36 @@ $('apply-clean').addEventListener('click', async () => {
     const panel = $('result-panel');
     panel.hidden = false;
     let removed = 0;
-    for (const ev of events) if (ev.event === 'removed' || ev.event === 'would_remove') removed++;
-    $('result-status').textContent = `${removed} removed`;
-    $('result-status').className = 'pill ok';
+    const failed = [];
+    const removedPaths = [];
+    for (const ev of events) {
+      if (ev.event === 'removed') { removed++; removedPaths.push(ev.path); }
+      if (ev.event === 'failed') failed.push(ev.path);
+    }
+    const complete = failed.length === 0 && removed === paths.length;
     $('result-log').textContent = events.map((e) => JSON.stringify(e)).join('\n');
-    toast(`Done — ${removed} item(s) removed.`);
-    selected.clear();
-    renderClean({ items: [], total_bytes: 0, total_human: '0 B' });
+    if (complete) {
+      $('result-status').textContent = `${removed} removed`;
+      $('result-status').className = 'pill ok';
+      toast(`Done — ${removed} item(s) moved to the Recycle Bin.`);
+      selected.clear();
+      renderClean({ items: [], total_bytes: 0, total_human: '0 B' });
+    } else {
+      const missedPaths = failed.length
+        ? failed
+        : paths.filter((p) => !removedPaths.includes(p));
+      // Keep only what actually failed. Removed paths no longer exist, and the
+      // backend refuses a batch containing a missing path.
+      const retry = new Set(missedPaths);
+      selected = new Set([...selected].filter((i) => retry.has(candidates[i].path)));
+      document.querySelectorAll('#clean-list input[type=checkbox]').forEach((box) => {
+        box.checked = retry.has(candidates[Number(box.dataset.i)].path);
+      });
+      updateSelection();
+      $('result-status').textContent = `${removed} of ${paths.length} removed — incomplete`;
+      $('result-status').className = 'pill bad';
+      toast(`Incomplete — could not remove: ${missedPaths.join(', ')}. Only those remain selected for a retry.`, true);
+    }
   } catch (e) {
     $('result-panel').hidden = false;
     $('result-status').textContent = 'failed';
@@ -205,10 +229,11 @@ $('refresh-status').addEventListener('click', async () => {
     const data = await invoke('system_status');
     const cards = $('status-cards');
     cards.innerHTML = '';
-    const metrics = data && !data.error ? [
-      ['Health', data.health_score ?? '—'],
-      ['CPU', (data.cpu && data.cpu.usage != null) ? data.cpu.usage + '%' : '—'],
-      ['Memory', data.memory && data.memory.total ? fmt(data.memory.total) : '—'],
+    const d = data && data.ok !== false ? data.data || data : null;
+    const metrics = d && !d.error ? [
+      ['Health', d.health_score ?? '—'],
+      ['CPU', (d.cpu && d.cpu.usage != null) ? d.cpu.usage + '%' : '—'],
+      ['Memory', d.memory && d.memory.total ? fmt(d.memory.total) : '—'],
     ] : [['Result', 'unavailable']];
     metrics.forEach(([label, value]) => {
       const c = document.createElement('div');

@@ -12,23 +12,28 @@ anything without an explicit confirmation in the UI.
 ## How it works
 
 ```
-Scour (Tauri app)  ──argv──▶  burrow-engine.exe  ──▶  disk
+Scour (Tauri app)  ──argv──▶  burrow-engine.exe   (scan / analyze / optimize)
                    ◀──JSON──
+        │
+        └── OS Recycle Bin  (the reviewed deletions)
 ```
 
 The engine is launched as a separate process; Scour never links its code. Commands
 map directly onto the engine's own CLI:
 
-| UI action | Engine command |
+| UI action | What runs |
 |---|---|
 | Scan for junk | `clean --dry-run` |
 | Analyze a folder | `analyze <path>` |
 | Preview maintenance | `optimize --dry-run` |
-| Clean selected | write a plan file, then `clean --plan <file> --apply` |
+| Clean selected | Scour moves exactly the ticked paths to the Recycle Bin |
 | Status | `status` |
 
-The plan file contains only the paths you selected, so a second scan cannot change
-what gets deleted. Scour removes the plan file immediately after the run.
+The engine's `--apply` is macOS-only, so on Windows Scour performs the deletion
+itself using the OS Recycle Bin. It deletes only the paths you ticked — a second
+scan cannot change the list — and refuses absolute-root, system, profile-root and
+symlink paths before anything is removed. Deletions are recoverable; nothing is
+permanently erased.
 
 `status` and several maintenance tasks are macOS-only in the engine; on Windows the
 app shows the engine's own "unavailable" reason instead of faking a result.

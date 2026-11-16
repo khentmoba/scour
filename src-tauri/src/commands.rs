@@ -1,3 +1,4 @@
+use crate::cleanup;
 use crate::engine::Engine;
 use serde_json::Value;
 use tauri::State;
@@ -43,9 +44,6 @@ pub fn preview_optimize(state: State<'_, EngineState>) -> Result<Value, String> 
 }
 
 #[tauri::command]
-pub fn apply_clean(state: State<'_, EngineState>, paths: Vec<String>) -> Result<Vec<Value>, String> {
-    if paths.is_empty() {
-        return Err("no paths selected".into());
-    }
-    state.engine()?.apply_plan(&paths)
+pub fn apply_clean(paths: Vec<String>) -> Result<Vec<Value>, String> {
+    cleanup::delete_reviewed(&paths)
 }

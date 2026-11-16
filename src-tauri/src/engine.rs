@@ -6,7 +6,6 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -104,28 +103,6 @@ impl Engine {
         decode_data(&out)
     }
 
-    /// Delete exactly the reviewed paths. The engine removes only what is in
-    /// the plan file, and Scour deletes the plan file immediately afterwards.
-    pub fn apply_plan(&self, paths: &[String]) -> Result<Vec<Value>, String> {
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        let plan = write_plan_file(paths, &std::env::temp_dir(), stamp as u64)?;
-        let plan_arg = plan.to_string_lossy().into_owned();
-        let result = self.run(&["clean", "--plan", &plan_arg, "--apply"]);
-        let _ = fs::remove_file(&plan);
-        let out = result?;
-        let events = parse_ndjson(&out)?;
-        if !out.status.success() {
-            return Err(format!(
-                "engine exited with status {} during cleanup ({} event(s) emitted); see the run log",
-                out.status,
-                events.len()
-            ));
-        }
-        Ok(events)
-    }
 }
 
 /// The one real side effect: start the engine as a child process.
@@ -166,46 +143,6 @@ fn decode_envelope<T: for<'de> Deserialize<'de>>(out: &Output) -> Result<T, Stri
     decode_data(out).and_then(|v| {
         serde_json::from_value(v).map_err(|e| format!("engine data has an unexpected shape: {e}"))
     })
-}
-
-fn parse_ndjson(out: &Output) -> Result<Vec<Value>, String> {
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let lines: Vec<Value> = stdout
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .filter_map(|l| match serde_json::from_str(l) {
-            Ok(v) => Some(v),
-            Err(_) => None,
-        })
-        .collect();
-    if lines.is_empty() {
-        let single = parse_json(out)?;
-        return Ok(vec![single]);
-    }
-    Ok(lines)
-}
-
-/// Build the plan the engine will execute. Only non-empty, non-comment lines
-/// are included; the engine itself validates that each path is a clean target.
-pub fn write_plan_file(paths: &[String], dir: &Path, id: u64) -> Result<PathBuf, String> {
-    let mut body = String::from("# Scour reviewed clean plan\n");
-    let mut count = 0usize;
-    for raw in paths {
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        body.push_str(line);
-        body.push('\n');
-        count += 1;
-    }
-    if count == 0 {
-        return Err("no paths selected for cleaning".into());
-    }
-    let file = dir.join(format!("scour-plan-{id}.txt"));
-    fs::write(&file, body)
-        .map_err(|e| format!("could not write clean plan: {e}"))?;
-    Ok(file)
 }
 
 #[derive(Debug, Deserialize)]
@@ -326,39 +263,6 @@ mod tests {
         let err = decode_data(&out).unwrap_err();
         assert!(err.contains("unsupported"), "{err}");
         assert!(err.contains("no probes"), "{err}");
-    }
-
-    #[test]
-    fn writes_only_selected_paths_to_plan() {
-        let dir = std::env::temp_dir();
-        let file = write_plan_file(
-            &["C:\\tmp\\a".into(), "".into(), "# note".into(), "D:\\b".into()],
-            &dir,
-            424242,
-        )
-        .unwrap();
-        let text = fs::read_to_string(&file).unwrap();
-        assert_eq!(text, "# Scour reviewed clean plan\nC:\\tmp\\a\nD:\\b\n");
-        fs::remove_file(&file).unwrap();
-    }
-
-    #[test]
-    fn apply_plan_uses_plan_and_apply_flags() {
-        let engine = Engine::new(PathBuf::from("engine"));
-        let events = engine
-            .run_with(&["clean", "--plan", "plan.txt", "--apply"], |_, _| {
-                Ok(output("{\"event\":\"removed\",\"path\":\"C:\\\\tmp\\\\a\"}\n{\"event\":\"done\",\"dry_run\":false}\n"))
-            })
-            .and_then(|out| parse_ndjson(&out))
-            .unwrap();
-        assert_eq!(events.len(), 2);
-        assert_eq!(events[0]["event"], "removed");
-    }
-
-    #[test]
-    fn rejects_empty_plan() {
-        let err = write_plan_file(&["".into(), "# only a comment".into()], &std::env::temp_dir(), 1);
-        assert!(err.is_err());
     }
 
     /// Wiring check against the real staged binary. Safe: `--dry-run` deletes nothing.
