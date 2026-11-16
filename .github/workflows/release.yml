@@ -28,15 +28,14 @@ jobs:
       # The frontend has no bundler, but the Tauri CLI is installed from npm.
       - run: npm install
 
-      - name: Build signed installers and publish the release
+      - name: Build installers and publish the release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'Scour ${{ github.ref_name }}'
-          releaseBody: 'Install Scour with the NSIS setup.exe or the MSI below. In-app updates use latest.json from this release.'
-          updaterJsonPreferNsis: true
+          releaseBody: 'Install Scour with the NSIS setup.exe or the MSI below. In-app updates use the NSIS setup.exe.'
+          uploadUpdaterJson: false
+          uploadUpdaterSignatures: false
           uploadWorkflowArtifacts: true

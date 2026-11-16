@@ -366,7 +366,7 @@ $('check-update').addEventListener('click', async () => {
       setUpdateState('update available');
       $('update-notes').textContent = result.notes || `Version ${result.version} is ready.`;
       $('install-update').hidden = false;
-      $('update-detail').textContent = `Version ${result.current_version} → ${result.version}. One click downloads, verifies and installs, then restarts Scour.`;
+      $('update-detail').textContent = `Version ${result.current_version} → ${result.version}. One click downloads the setup from GitHub Releases, installs it and restarts Scour.`;
     } else {
       setUpdateState('up to date');
       $('update-notes').textContent = `You are running the latest version (${result.version}).`;
@@ -389,7 +389,7 @@ $('install-update').addEventListener('click', async () => {
   $('update-progress').hidden = false;
   $('update-bar').style.width = '0%';
   setUpdateState('downloading…');
-  $('update-detail').textContent = 'Downloading and verifying the signed installer. Scour will restart automatically.';
+  $('update-detail').textContent = 'Downloading the installer from GitHub Releases. Scour will restart automatically.';
   try {
     const result = await invoke('install_update');
     $('update-log').hidden = false;
@@ -413,7 +413,7 @@ listen(UPDATE_EVENT, (p) => {
   if (p.phase === 'downloaded') {
     $('update-bar').style.width = '100%';
     setUpdateState('installing…');
-    $('update-detail').textContent = 'Download verified. Installing and restarting Scour…';
+    $('update-detail').textContent = 'Download finished. Installing and restarting Scour…';
     return;
   }
   const pct = Number(p.percent || 0);

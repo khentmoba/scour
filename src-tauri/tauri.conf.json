@@ -48,13 +48,5 @@
         "installMode": "currentUser"
       }
     }
-  },
-  "plugins": {
-    "updater": {
-      "endpoints": [
-        "https://github.com/khentmoba/scour/releases/latest/download/latest.json"
-      ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE0OTRFNUZENDZGMEVBMDAKUldRQTZ2QkcvZVdVcENTVWpzU243M1l5YTR6MklMKzNmUU8zQ2IybFA2MHE5RVZiUzU2TUR3WGQK"
-    }
   }
 }
