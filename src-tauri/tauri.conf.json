@@ -25,7 +25,13 @@
     }
   },
   "bundle": {
-    "active": false,
+    "active": true,
+    "targets": ["nsis", "msi"],
+    "publisher": "khentmoba",
+    "copyright": "Copyright © 2026 khentmoba",
+    "category": "Utility",
+    "shortDescription": "Review-first disk cleaner for Windows",
+    "longDescription": "Scour scans with the Burrow engine and moves only the files you tick to the Recycle Bin.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -36,6 +42,19 @@
       "binaries/burrow-engine.exe",
       "binaries/LICENSE.md",
       "binaries/THIRD-PARTY-NOTICES.md"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/khentmoba/scour/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE0OTRFNUZENDZGMEVBMDAKUldRQTZ2QkcvZVdVcENTVWpzU243M1l5YTR6MklMKzNmUU8zQ2IybFA2MHE5RVZiUzU2TUR3WGQK"
+    }
   }
 }

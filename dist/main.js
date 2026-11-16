@@ -2,16 +2,86 @@
 // outside it, a small mock keeps the UI usable for browser-based visual checks.
 const $ = (id) => document.getElementById(id);
 
+// In a plain browser, install a tiny shim with the same invoke/callback shape as
+// Tauri's bridge so the whole UI — including update progress — can be previewed.
+if (typeof window.__TAURI_INTERNALS__?.invoke !== 'function') {
+  const callbacks = new Map();
+  let nextId = 1;
+  window.__TAURI_INTERNALS__ = {
+    invoke: mockInvoke,
+    transformCallback: (fn) => { const id = nextId++; callbacks.set(id, fn); return id; },
+    unregisterCallback: (id) => callbacks.delete(id),
+    runCallback: (id, data) => { const fn = callbacks.get(id); if (fn) fn(data); },
+  };
+}
+
 async function invoke(cmd, args = {}) {
+  return window.__TAURI_INTERNALS__.invoke(cmd, args);
+}
+
+// Subscribe to a Rust `app.emit` event using the bridge primitives the Tauri
+// runtime already ships, so no npm/event package is needed in this no-bundler app.
+async function listen(event, handler) {
   const bridge = window.__TAURI_INTERNALS__;
-  if (bridge && typeof bridge.invoke === 'function') {
-    return bridge.invoke(cmd, args);
+  if (typeof bridge.invoke !== 'function' || typeof bridge.transformCallback !== 'function') {
+    return () => {};
   }
-  return mockInvoke(cmd, args);
+  const handlerId = bridge.transformCallback((e) => handler(e.payload));
+  const eventId = await bridge.invoke('plugin:event|listen', {
+    event,
+    target: { kind: 'Any' },
+    handler: handlerId,
+  });
+  return async () => {
+    try { await bridge.invoke('plugin:event|unlisten', { event, eventId }); } catch (_) {}
+    try { window.__TAURI_EVENT_PLUGIN_INTERNALS__?.unregisterListener?.(event, eventId); } catch (_) {}
+  };
+}
+
+const mockListeners = new Map();
+function mockEmit(event, payload) {
+  for (const id of mockListeners.get(event) || []) {
+    window.__TAURI_INTERNALS__.runCallback(id, { event, id: -1, payload });
+  }
 }
 
 function mockInvoke(cmd, args) {
   const wait = () => new Promise((r) => setTimeout(r, 220));
+  if (cmd === 'plugin:event|listen') {
+    const ids = mockListeners.get(args.event) || [];
+    ids.push(args.handler);
+    mockListeners.set(args.event, ids);
+    return wait().then(() => ids.length);
+  }
+  if (cmd === 'plugin:event|unlisten') {
+    const ids = (mockListeners.get(args.event) || []).filter((id) => id !== args.eventId);
+    mockListeners.set(args.event, ids);
+    return wait().then(() => null);
+  }
+  if (cmd === 'app_version') return wait().then(() => '0.1.0');
+  if (cmd === 'check_update') return wait().then(() => ({
+    available: true,
+    current_version: '0.1.0',
+    version: '0.2.0',
+    notes: 'Mock release — installation is disabled in the browser preview.',
+    date: '2026-11-17',
+  }));
+  if (cmd === 'install_update') {
+    return new Promise((resolve) => {
+      let sent = 0;
+      const timer = setInterval(() => {
+        sent += 1;
+        mockEmit('scour://update-progress', {
+          phase: 'download', downloaded: sent * 25, total: 100, percent: sent * 25,
+        });
+        if (sent === 4) {
+          clearInterval(timer);
+          mockEmit('scour://update-progress', { phase: 'downloaded', percent: 100 });
+          resolve({ installed: true, version: '0.2.0', restart_required: true });
+        }
+      }, 220);
+    });
+  }
   if (cmd === 'engine_version') return wait().then(() => ({ version: '0.1.0', engine: 'burrow-engine' }));
   if (cmd === 'scan_clean') return wait().then(() => ({
     dry_run: true, total_bytes: 482100000, total_human: '482.1MB', items: [
@@ -265,6 +335,92 @@ $('preview-optimize').addEventListener('click', async () => {
   } catch (e) { toast(String(e), true); }
 });
 
+const UPDATE_EVENT = 'scour://update-progress';
+let updateAvailable = null;
+
+function setUpdateState(text, bad = false) {
+  const pill = $('update-state');
+  pill.textContent = text;
+  pill.className = 'pill' + (bad ? ' bad' : text === 'up to date' ? ' ok' : '');
+  $('update-status-card').textContent = text;
+}
+
+$('check-update').addEventListener('click', async () => {
+  const btn = $('check-update');
+  btn.disabled = true; btn.textContent = 'Checking…';
+  updateAvailable = null;
+  $('install-update').hidden = true;
+  $('update-log').hidden = true;
+  $('update-progress').hidden = true;
+  $('update-bar').style.width = '0%';
+  $('update-latest').textContent = '—';
+  setUpdateState('checking…');
+  $('update-notes').textContent = 'Checking GitHub Releases…';
+  try {
+    const result = await invoke('check_update');
+    $('update-log').hidden = false;
+    $('update-log').textContent = JSON.stringify(result, null, 2);
+    $('update-latest').textContent = result.version || '—';
+    if (result.available) {
+      updateAvailable = result;
+      setUpdateState('update available');
+      $('update-notes').textContent = result.notes || `Version ${result.version} is ready.`;
+      $('install-update').hidden = false;
+      $('update-detail').textContent = `Version ${result.current_version} → ${result.version}. One click downloads, verifies and installs, then restarts Scour.`;
+    } else {
+      setUpdateState('up to date');
+      $('update-notes').textContent = `You are running the latest version (${result.version}).`;
+      $('update-detail').textContent = 'Checks GitHub Releases only when you click. Nothing is checked or downloaded in the background.';
+    }
+  } catch (e) {
+    setUpdateState('check failed', true);
+    $('update-notes').textContent = String(e);
+    toast(String(e), true);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Check for updates';
+  }
+});
+
+$('install-update').addEventListener('click', async () => {
+  if (!updateAvailable) return;
+  const btn = $('install-update');
+  btn.disabled = true; btn.textContent = 'Installing…';
+  $('check-update').disabled = true;
+  $('update-progress').hidden = false;
+  $('update-bar').style.width = '0%';
+  setUpdateState('downloading…');
+  $('update-detail').textContent = 'Downloading and verifying the signed installer. Scour will restart automatically.';
+  try {
+    const result = await invoke('install_update');
+    $('update-log').hidden = false;
+    $('update-log').textContent = JSON.stringify(result, null, 2);
+    setUpdateState('installed');
+    $('update-detail').textContent = result.restart_required
+      ? 'Update installed. Close and reopen Scour to run the new version.'
+      : 'Update is installing — Scour will restart in a moment.';
+  } catch (e) {
+    setUpdateState('install failed', true);
+    $('update-detail').textContent = String(e);
+    toast(String(e), true);
+    $('update-progress').hidden = true;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Update & restart';
+    $('check-update').disabled = false;
+  }
+});
+
+listen(UPDATE_EVENT, (p) => {
+  if (p.phase === 'downloaded') {
+    $('update-bar').style.width = '100%';
+    setUpdateState('installing…');
+    $('update-detail').textContent = 'Download verified. Installing and restarting Scour…';
+    return;
+  }
+  const pct = Number(p.percent || 0);
+  $('update-bar').style.width = `${pct}%`;
+  setUpdateState(`downloading ${Math.round(pct)}%`);
+});
+
 (async function init() {
   try {
     const v = await invoke('engine_version');
@@ -274,5 +430,10 @@ $('preview-optimize').addEventListener('click', async () => {
   } catch (e) {
     $('engine-label').textContent = 'engine: unavailable';
     $('engine-dot').className = 'dot bad';
+  }
+  try {
+    $('update-current').textContent = await invoke('app_version');
+  } catch (e) {
+    $('update-current').textContent = 'unknown';
   }
 })();

@@ -2,3 +2,7 @@ node_modules/
 src-tauri/target/
 *.log
 .DS_Store
+
+# Update signing key. The public half lives in src-tauri/tauri.conf.json;
+# the private half must never be committed (it goes to a GitHub secret).
+signing/

@@ -1,6 +1,7 @@
 mod cleanup;
 mod commands;
 mod engine;
+mod updater;
 
 use commands::EngineState;
 use engine::Engine;
@@ -13,6 +14,7 @@ fn main() {
     }
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(EngineState(engine))
         .invoke_handler(tauri::generate_handler![
             commands::engine_version,
@@ -21,6 +23,9 @@ fn main() {
             commands::analyze_dir,
             commands::preview_optimize,
             commands::apply_clean,
+            updater::app_version,
+            updater::check_update,
+            updater::install_update,
         ])
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
