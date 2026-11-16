@@ -177,7 +177,9 @@ pub async fn install_update(app: tauri::AppHandle) -> Result<Value, String> {
         .header("User-Agent", "scour")
         .send()
         .await
-        .map_err(|e| format!("could not start the download: {e}"))?;
+        .map_err(|e| format!("could not start the download: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("the download was rejected: {e}"))?;
     let total = response.content_length();
     let mut file = File::create(&path)
         .map_err(|e| format!("could not create {}: {e}", path.display()))?;
