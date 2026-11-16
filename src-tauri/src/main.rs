@@ -14,7 +14,6 @@ fn main() {
     }
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(EngineState(engine))
         .invoke_handler(tauri::generate_handler![
             commands::engine_version,

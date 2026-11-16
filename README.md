@@ -47,14 +47,16 @@ with two Windows installers:
 - `Scour_<version>_x64.msi` — WiX installer, for machines managed with MSI.
 
 Pick either one. Once installed, open **Updates** in Scour and click **Check for
-updates**. When a newer release exists, **Update & restart** downloads the signed
-installer, verifies it against the public key in `src-tauri/tauri.conf.json`,
-installs it and relaunches Scour on the new version — no second click. Nothing is
-checked or downloaded unless you press the button.
+updates**. When a newer release exists, **Update & restart** downloads that
+release's NSIS setup and runs it with the update flag. The installer replaces the
+running copy and relaunches Scour on the new version. Nothing is checked or
+downloaded unless you press the button.
 
-The check reads `latest.json` from the newest GitHub release. Development builds
-are not a supported update target: there is no installer for them to replace, so
-don't use **Update & restart** from `npm run dev`.
+The check reads the newest GitHub release over HTTPS. No signing key, secret, or
+`latest.json` is involved. Updates trust the HTTPS connection to GitHub rather
+than a detached signature, so only install from releases published in this
+repository. Development builds are not a supported update target because there
+is no installer for them to replace.
 
 ## Build and run
 
@@ -87,7 +89,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 - `src-tauri/src/commands.rs` — Tauri commands exposed to the UI
 - `src-tauri/src/updater.rs` — in-app update checks, download progress and install
 - `src-tauri/binaries/` — bundled engine plus its license notices
-- `.github/workflows/release.yml` — builds signed installers and `latest.json` on a tag
+- `.github/workflows/release.yml` — builds installers on a tag
 
 ## Releasing
 
@@ -95,18 +97,11 @@ cargo test --manifest-path src-tauri/Cargo.toml
    `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml` (then refresh
    `src-tauri/Cargo.lock` with `cargo check`).
 2. Commit, tag `vX.Y.Z` and push the tag. The release workflow builds both
-   installers, signs them, publishes the release assets and writes `latest.json`.
+   installers and publishes them as release assets. The tag supplies the version
+   that the in-app check compares against.
 
-Signing needs a private key that is deliberately **not** in the repository. It was
-generated locally with `cargo tauri signer generate` and is stored at
-`signing/tauri-private.key` (gitignored). Before the first release, add its
-contents as the repository secret `TAURI_SIGNING_PRIVATE_KEY`. The key has no
-password, so `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` can be left empty. The matching
-public key is already embedded in `src-tauri/tauri.conf.json`.
-
-If the private key is lost, generate a new pair and update **both** the secret and
-the `pubkey` in `tauri.conf.json` in the same release — an existing install will
-only accept updates signed by the key it shipped with.
+No signing key or repository secret is needed beyond the GitHub token the
+workflow already receives.
 
 ## Licensing
 
