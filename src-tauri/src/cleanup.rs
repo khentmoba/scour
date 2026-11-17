@@ -39,7 +39,8 @@ fn cached_home() -> &'static PathBuf {
         let home = std::env::var("USERPROFILE")
             .or_else(|_| std::env::var("HOME"))
             .unwrap_or_default();
-        normalize_lexical(Path::new(&home))
+        let pb = PathBuf::from(home);
+        fs::canonicalize(&pb).unwrap_or(pb)
     })
 }
 
@@ -49,7 +50,7 @@ fn cached_exe_dir() -> Option<&'static Path> {
         .get_or_init(|| {
             std::env::current_exe()
                 .ok()
-                .and_then(|exe| exe.parent().map(|p| p.to_path_buf()))
+                .and_then(|exe| exe.parent().map(|p| fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())))
         })
         .as_deref()
 }
@@ -244,41 +245,10 @@ fn validate_borrowed<'a>(
         if !path.is_absolute() || path.file_name().is_none() {
             return Err(format!("refusing non-absolute or root path: {line}"));
         }
-        // Lexical / protected-path check before any filesystem metadata syscalls.
-        let mut has_dots = false;
-        let mut blocked_hit = false;
-        for comp in path.components() {
-            match comp {
-                Component::CurDir | Component::ParentDir => {
-                    has_dots = true;
-                    break;
-                }
-                Component::Normal(part) => {
-                    if let Some(s) = part.to_str() {
-                        if is_blocked_part(s) {
-                            blocked_hit = true;
-                            break;
-                        }
-                    } else {
-                        let s = part.to_string_lossy();
-                        if is_blocked_part(&s) {
-                            blocked_hit = true;
-                            break;
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-        let is_forbidden = if blocked_hit {
-            true
-        } else if has_dots {
-            let resolved = normalize_lexical(path);
-            forbidden(&resolved, resolved_home, exe_dir)
-        } else {
-            forbidden_roots(path, resolved_home, exe_dir)
-        };
-        if is_forbidden {
+        // Canonicalize the target so 8.3 short names, trailing slashes, `.`/`..`,
+        // and junctions cannot disguise a protected system or profile root.
+        let resolved = fs::canonicalize(path).unwrap_or_else(|_| normalize_lexical(path));
+        if forbidden(&resolved, resolved_home, exe_dir) {
             return Err(format!("refusing a protected path: {line}"));
         }
         let meta = fs::symlink_metadata(path)
@@ -338,15 +308,11 @@ fn normalize_lexical(path: &Path) -> PathBuf {
 }
 
 fn forbidden_roots(path: &Path, home: &Path, exe_dir: Option<&Path>) -> bool {
-    let path_len = path.as_os_str().len();
-    if !home.as_os_str().is_empty()
-        && path_len <= home.as_os_str().len()
-        && (path == home || home.starts_with(path))
-    {
+    if !home.as_os_str().is_empty() && (path == home || home.starts_with(path)) {
         return true;
     }
     if let Some(dir) = exe_dir {
-        if path_len <= dir.as_os_str().len() && (path == dir || dir.starts_with(path)) {
+        if path == dir || dir.starts_with(path) {
             return true;
         }
     }
@@ -506,5 +472,28 @@ mod tests {
         });
         assert!(result.is_err());
         assert_eq!(*seen.lock().unwrap(), 0);
+    }
+
+    #[test]
+    fn refuses_home_with_trailing_separator_dot_or_case_variant() {
+        let home = std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .unwrap_or_default();
+        if home.is_empty() {
+            return;
+        }
+        let trailing = format!("{home}\\");
+        let dot = format!("{home}\\.");
+        let upper = home.to_uppercase();
+        for variant in [trailing, dot, upper] {
+            assert!(validate(&[variant.clone()]).is_err(), "should refuse {variant}");
+        }
+        #[cfg(windows)]
+        {
+            let short = Path::new("C:\\PROGRA~1");
+            if short.exists() {
+                assert!(validate(&["C:\\PROGRA~1".into()]).is_err(), "should refuse 8.3 short name");
+            }
+        }
     }
 }
