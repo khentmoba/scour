@@ -10,13 +10,31 @@
 //! of a detached signature.
 
 use reqwest::Client;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs::File;
-use std::io::Write;
+use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use tauri::Emitter;
+
+fn http_client() -> &'static Client {
+    static CLIENT: OnceLock<Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .build()
+            .unwrap_or_else(|_| Client::new())
+    })
+}
+
+static CACHED_RELEASE: OnceLock<Mutex<Option<(String, DownloadTarget)>>> = OnceLock::new();
+
+fn cached_release() -> &'static Mutex<Option<(String, DownloadTarget)>> {
+    CACHED_RELEASE.get_or_init(|| Mutex::new(None))
+}
 
 const RELEASES_API: &str = "https://api.github.com/repos/khentmoba/scour/releases/latest";
 const RELEASES_PAGE: &str = "https://github.com/khentmoba/scour/releases/latest";
@@ -71,17 +89,38 @@ fn status_payload(current_version: &str, remote: Option<ReleaseInfo>) -> Value {
     }
 }
 
-fn progress_payload(downloaded: u64, total: Option<u64>) -> Value {
+#[derive(Serialize, Clone)]
+struct DownloadedProgress {
+    phase: &'static str,
+    percent: f64,
+}
+
+#[derive(Serialize)]
+struct InstallResult {
+    installed: bool,
+    version: String,
+    restart_required: bool,
+}
+
+#[derive(Serialize, Clone)]
+struct UpdateProgress {
+    phase: &'static str,
+    downloaded: u64,
+    total: Option<u64>,
+    percent: Option<f64>,
+}
+
+fn progress_payload(downloaded: u64, total: Option<u64>) -> UpdateProgress {
     let percent = total.filter(|&t| t > 0).map(|t| {
         let value = downloaded as f64 / t as f64 * 100.0;
         value.clamp(0.0, 100.0)
     });
-    json!({
-        "phase": "download",
-        "downloaded": downloaded,
-        "total": total,
-        "percent": percent,
-    })
+    UpdateProgress {
+        phase: "download",
+        downloaded,
+        total,
+        percent,
+    }
 }
 
 fn is_newer(current: &str, remote: &str) -> Result<bool, String> {
@@ -119,10 +158,10 @@ async fn latest_release(client: &Client) -> Result<GithubRelease, String> {
         return Err(format!("GitHub Releases returned {status}"));
     }
     let body = response
-        .text()
+        .bytes()
         .await
         .map_err(|e| format!("could not read the release response: {e}"))?;
-    serde_json::from_str(&body)
+    serde_json::from_slice(&body)
         .map_err(|e| format!("release response has an unexpected shape: {e}"))
 }
 
@@ -153,23 +192,48 @@ pub fn app_version() -> &'static str {
 #[tauri::command]
 pub async fn check_update() -> Result<Value, String> {
     let current = env!("CARGO_PKG_VERSION");
-    let client = Client::new();
-    let release = latest_release(&client).await?;
-    release_status(current, &release)
+    let release = latest_release(http_client()).await?;
+    let ver = release_version(&release);
+    let newer = is_newer(current, ver)?;
+    if newer {
+        if let Some(target) = pick_installer(&release.assets) {
+            if let Ok(mut guard) = cached_release().lock() {
+                *guard = Some((ver.to_string(), target));
+            }
+        }
+    }
+    let found = if newer {
+        Some(ReleaseInfo {
+            version: ver.to_string(),
+            notes: Some(release.body.trim().to_string()).filter(|s| !s.is_empty()),
+            date: release.published_at.clone(),
+        })
+    } else {
+        None
+    };
+    Ok(status_payload(current, found))
 }
 
 /// Download the newest NSIS installer and let it replace and relaunch Scour.
 #[tauri::command]
 pub async fn install_update(app: tauri::AppHandle) -> Result<Value, String> {
-    let client = Client::new();
-    let release = latest_release(&client).await?;
-    let version = release_version(&release).to_string();
-    if !is_newer(env!("CARGO_PKG_VERSION"), &version)? {
-        return Err("already running the latest version".into());
-    }
-
-    let target = pick_installer(&release.assets)
-        .ok_or_else(|| format!("no Windows setup.exe in the latest release, see {RELEASES_PAGE}"))?;
+    let client = http_client();
+    let cached = cached_release().lock().ok().and_then(|mut g| g.take());
+    let (version, target) = if let Some((ver, target)) = cached {
+        if !is_newer(env!("CARGO_PKG_VERSION"), &ver)? {
+            return Err("already running the latest version".into());
+        }
+        (ver, target)
+    } else {
+        let release = latest_release(client).await?;
+        let version = release_version(&release).to_string();
+        if !is_newer(env!("CARGO_PKG_VERSION"), &version)? {
+            return Err("already running the latest version".into());
+        }
+        let target = pick_installer(&release.assets)
+            .ok_or_else(|| format!("no Windows setup.exe in the latest release, see {RELEASES_PAGE}"))?;
+        (version, target)
+    };
 
     let path = std::env::temp_dir().join(&target.name);
     let mut response = client
@@ -181,30 +245,51 @@ pub async fn install_update(app: tauri::AppHandle) -> Result<Value, String> {
         .error_for_status()
         .map_err(|e| format!("the download was rejected: {e}"))?;
     let total = response.content_length();
-    let mut file = File::create(&path)
+    let file = File::create(&path)
         .map_err(|e| format!("could not create {}: {e}", path.display()))?;
+    let mut writer = BufWriter::with_capacity(64 * 1024, file);
     let mut downloaded = 0u64;
+    let mut last_emit = Instant::now();
+    let mut last_pct: Option<u64> = None;
 
     while let Some(chunk) = response
         .chunk()
         .await
         .map_err(|e| format!("download failed: {e}"))?
     {
-        file.write_all(&chunk)
+        writer
+            .write_all(&chunk)
             .map_err(|e| format!("could not write the installer: {e}"))?;
         downloaded += chunk.len() as u64;
-        let _ = app.emit(UPDATE_PROGRESS_EVENT, progress_payload(downloaded, total));
+        let pct = total.filter(|&t| t > 0).map(|t| (downloaded * 100) / t);
+        let elapsed = last_emit.elapsed().as_millis();
+        if (pct != last_pct && elapsed >= 50) || elapsed >= 250 {
+            last_pct = pct;
+            last_emit = Instant::now();
+            let _ = app.emit(UPDATE_PROGRESS_EVENT, progress_payload(downloaded, total));
+        }
     }
-    drop(file);
+    writer
+        .flush()
+        .map_err(|e| format!("could not flush the installer: {e}"))?;
+    drop(writer);
     let _ = app.emit(
         UPDATE_PROGRESS_EVENT,
-        json!({ "phase": "downloaded", "percent": 100.0 }),
+        DownloadedProgress {
+            phase: "downloaded",
+            percent: 100.0,
+        },
     );
 
     spawn_installer(&path)?;
 
     // Windows exits here so the installer can replace the running executable.
-    Ok(json!({ "installed": true, "version": version, "restart_required": cfg!(not(windows)) }))
+    Ok(serde_json::to_value(InstallResult {
+        installed: true,
+        version,
+        restart_required: cfg!(not(windows)),
+    })
+    .unwrap_or_default())
 }
 
 #[cfg(windows)]
@@ -293,13 +378,13 @@ mod tests {
     #[test]
     fn progress_accumulates_chunks_and_computes_a_percentage() {
         let first = progress_payload(25, Some(100));
-        assert_eq!(first["downloaded"], 25);
-        assert_eq!(first["percent"], 25.0);
+        assert_eq!(first.downloaded, 25);
+        assert_eq!(first.percent, Some(25.0));
 
         let last = progress_payload(100, Some(100));
-        assert_eq!(last["percent"], 100.0);
+        assert_eq!(last.percent, Some(100.0));
 
         let unknown = progress_payload(42, None);
-        assert!(unknown["percent"].is_null());
+        assert!(unknown.percent.is_none());
     }
 }

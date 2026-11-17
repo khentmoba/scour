@@ -17,8 +17,17 @@ tauri = { version = "2", features = [] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 semver = "1"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["raw_value"] }
 trash = "5.3"
 # Find view: in-process fuzzy file search. Cargo.lock pins notify to 9.0.0-rc.4:
 # rc.9 breaks fff-notify-debouncer-full 0.9.4 (watched_paths/PathOp API changes).
 fff-search = "0.11"
+
+[profile.release]
+opt-level = "z"
+lto = "thin"
+strip = true
+panic = "abort"
+
+[profile.release.package."*"]
+opt-level = "z"

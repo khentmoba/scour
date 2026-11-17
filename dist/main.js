@@ -124,11 +124,13 @@ function mockInvoke(cmd, args) {
   throw new Error('unknown command: ' + cmd);
 }
 
+const LOG_1024 = Math.log(1024);
+const SIZE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB'];
+
 function fmt(bytes) {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-  return `${(bytes / 1024 ** i).toFixed(i ? 1 : 0)} ${units[i]}`;
+  const i = Math.min(Math.floor(Math.log(bytes) / LOG_1024), SIZE_UNITS.length - 1);
+  return `${(bytes / 1024 ** i).toFixed(i ? 1 : 0)} ${SIZE_UNITS[i]}`;
 }
 
 let toastTimer;
@@ -141,61 +143,227 @@ function toast(msg, bad = false) {
   toastTimer = setTimeout(() => { el.hidden = true; }, 4200);
 }
 
+let activeNav = document.querySelector('.nav-item.active[data-view]');
+let activeView = document.querySelector('.view.active');
+const viewMap = new Map();
+document.querySelectorAll('.nav-item[data-view]').forEach((b) => {
+  const key = b.dataset.view;
+  viewMap.set(key, { nav: b, viewEl: $(`view-${key}`) });
+  b.addEventListener('click', () => show(key));
+});
+
+let appVersionLoaded = false;
 function show(view) {
-  document.querySelectorAll('.nav-item[data-view]').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
-  document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${view}`));
+  const target = viewMap.get(view);
+  if (!target) return;
+  if (activeNav && activeNav !== target.nav) activeNav.classList.remove('active');
+  if (activeView && activeView !== target.viewEl) activeView.classList.remove('active');
+  target.nav.classList.add('active');
+  if (target.viewEl) target.viewEl.classList.add('active');
+  activeNav = target.nav;
+  activeView = target.viewEl;
+  if (view === 'update' && !appVersionLoaded) {
+    appVersionLoaded = true;
+    invoke('app_version')
+      .then((v) => { $('update-current').textContent = v; })
+      .catch(() => { $('update-current').textContent = 'unknown'; });
+  }
 }
-document.querySelectorAll('.nav-item[data-view]').forEach((b) => b.addEventListener('click', () => show(b.dataset.view)));
 
 let candidates = [];
-let selected = new Set();
+let selectedMask = new Uint8Array(0);
+let selectedCount = 0;
+
+const ROW_HEIGHT = 64;
+const OVERSCAN = 4;
+
+function teardownVirtualList(list) {
+  if (list._onScroll) {
+    list.removeEventListener('scroll', list._onScroll);
+    list._onScroll = null;
+  }
+  if (list._raf) {
+    cancelAnimationFrame(list._raf);
+    list._raf = 0;
+  }
+  if (list._ro) {
+    list._ro.disconnect();
+    list._ro = null;
+  }
+  list._pool = null;
+}
+
+function mountVirtualList(list, items, createRow, updateRow) {
+  teardownVirtualList(list);
+  list.dataset.count = String(items.length);
+  if (!items.length) {
+    return;
+  }
+  let viewH = list.clientHeight || 420;
+  const spacer = document.createElement('div');
+  spacer.className = 'list-spacer';
+  spacer.style.height = `${items.length * ROW_HEIGHT}px`;
+  const viewport = document.createElement('div');
+  viewport.className = 'list-viewport';
+  spacer.appendChild(viewport);
+  list.replaceChildren(spacer);
+  list.scrollTop = 0;
+
+  const pool = [];
+  const free = [];
+  const activeSlots = [];
+  list._pool = pool;
+  let lastStart = -1;
+  let lastEnd = -1;
+  const paint = (force = false) => {
+    const scrollTop = list.scrollTop;
+    const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
+    const end = Math.min(items.length, Math.ceil((scrollTop + viewH) / ROW_HEIGHT) + OVERSCAN);
+    if (!force && start === lastStart && end === lastEnd) return;
+    lastStart = start;
+    lastEnd = end;
+    const needed = end - start;
+    let newFrag = null;
+    if (pool.length < needed) {
+      newFrag = document.createDocumentFragment();
+      while (pool.length < needed) {
+        const node = createRow();
+        node._idx = -1;
+        pool.push(node);
+        newFrag.appendChild(node);
+      }
+    }
+    if (force) {
+      for (let k = 0; k < pool.length; k++) pool[k]._idx = -1;
+    }
+    free.length = 0;
+    if (activeSlots.length < needed) activeSlots.length = needed;
+    activeSlots.fill(0, 0, needed);
+    for (let k = 0; k < pool.length; k++) {
+      const node = pool[k];
+      const idx = node._idx;
+      if (idx >= start && idx < end) {
+        activeSlots[idx - start] = 1;
+      } else {
+        free.push(node);
+      }
+    }
+    for (let k = 0; k < needed; k++) {
+      if (activeSlots[k]) continue;
+      const idx = start + k;
+      const node = free.pop();
+      node._idx = idx;
+      if (node.style.visibility) node.style.visibility = '';
+      node.style.transform = `translateY(${idx * ROW_HEIGHT}px)`;
+      updateRow(node, items[idx], idx);
+    }
+    for (let k = 0; k < free.length; k++) {
+      const node = free[k];
+      if (!node.style.visibility) node.style.visibility = 'hidden';
+      node._idx = -1;
+    }
+    if (newFrag) viewport.appendChild(newFrag);
+  };
+
+  if (typeof ResizeObserver === 'function') {
+    list._ro = new ResizeObserver(() => {
+      const h = list.clientHeight || 420;
+      if (h !== viewH) {
+        viewH = h;
+        paint(false);
+      }
+    });
+    list._ro.observe(list);
+  }
+
+  list._onScroll = () => {
+    if (list._raf) return;
+    list._raf = requestAnimationFrame(() => {
+      list._raf = 0;
+      paint(false);
+    });
+  };
+  list.addEventListener('scroll', list._onScroll, { passive: true });
+  paint(true);
+}
 
 function renderClean(data) {
   candidates = Array.isArray(data.items) ? data.items : [];
-  selected = new Set(candidates.map((_, i) => i));
+  selectedMask = new Uint8Array(candidates.length);
+  selectedMask.fill(1);
+  selectedCount = candidates.length;
   $('sum-count').textContent = candidates.length;
   $('sum-size').textContent = data.total_human || fmt(data.total_bytes || 0);
-  $('select-all').disabled = candidates.length === 0;
-  $('apply-clean').disabled = candidates.length === 0;
-  $('select-all').textContent = 'Deselect all';
+  selectAllBtn.disabled = candidates.length === 0;
 
   const list = $('clean-list');
-  list.innerHTML = '';
   if (!candidates.length) {
+    teardownVirtualList(list);
+    list.dataset.count = '0';
     list.innerHTML = '<div class="empty">Nothing disposable found.</div>';
     updateSelection();
     return;
   }
-  const max = Math.max(...candidates.map((c) => c.size || 0), 1);
-  candidates.forEach((c, i) => {
-    const row = document.createElement('label');
-    row.className = 'row';
-    const size = c.size_human || fmt(c.size);
-    row.innerHTML = `
-      <input type="checkbox" checked data-i="${i}" />
-      <div class="row-main">
-        <div class="row-label"></div>
-        <div class="row-path"></div>
-        <div class="bar"><i style="width:${Math.max((c.size || 0) / max * 100, 2)}%"></i></div>
-      </div>
-      <div class="row-size"></div>`;
-    row.querySelector('.row-label').textContent = c.label || c.path;
-    row.querySelector('.row-path').textContent = c.path;
-    row.querySelector('.row-size').textContent = size;
-    row.querySelector('input').addEventListener('change', (e) => {
-      const n = Number(e.target.dataset.i);
-      e.target.checked ? selected.add(n) : selected.delete(n);
-      updateSelection();
-    });
-    list.appendChild(row);
-  });
+  let max = 1;
+  for (let i = 0; i < candidates.length; i++) {
+    const sz = candidates[i].size || 0;
+    if (sz > max) max = sz;
+  }
+  const tpl = renderClean._tpl || (renderClean._tpl = (() => {
+    const t = document.createElement('template');
+    t.innerHTML = '<label class="row"><input type="checkbox" /><div class="row-main"><div class="row-label"></div><div class="row-path"></div><div class="bar"><i></i></div></div><div class="row-size"></div></label>';
+    return t;
+  })());
+  mountVirtualList(
+    list,
+    candidates,
+    () => {
+      const row = tpl.content.firstElementChild.cloneNode(true);
+      const box = row.firstElementChild;
+      const main = box.nextElementSibling;
+      row._refs = {
+        box,
+        label: main.children[0],
+        path: main.children[1],
+        bar: main.children[2].firstElementChild,
+        size: main.nextElementSibling,
+      };
+      return row;
+    },
+    (row, c, i) => {
+      const r = row._refs;
+      r.box._idx = i;
+      r.box.checked = selectedMask[i] === 1;
+      r.label.textContent = c.label || c.path;
+      r.path.textContent = c.path;
+      r.bar.style.transform = `scaleX(${Math.max((c.size || 0) / max, 0.02)})`;
+      r.size.textContent = c.size_human || c._sizeStr || (c._sizeStr = fmt(c.size));
+    },
+  );
   updateSelection();
 }
 
+const sumSelectedEl = $('sum-selected');
+const applyCleanBtn = $('apply-clean');
+const selectAllBtn = $('select-all');
+
+$('clean-list').addEventListener('change', (e) => {
+  const target = e.target;
+  if (target && target.tagName === 'INPUT' && target.type === 'checkbox') {
+    const n = target._idx;
+    const next = target.checked ? 1 : 0;
+    if (selectedMask[n] !== next) {
+      selectedMask[n] = next;
+      selectedCount += next ? 1 : -1;
+      updateSelection();
+    }
+  }
+});
+
 function updateSelection() {
-  $('sum-selected').textContent = selected.size;
-  $('apply-clean').disabled = selected.size === 0;
-  $('select-all').textContent = selected.size === candidates.length ? 'Deselect all' : 'Select all';
+  sumSelectedEl.textContent = selectedCount;
+  applyCleanBtn.disabled = selectedCount === 0;
+  selectAllBtn.textContent = selectedCount === candidates.length ? 'Deselect all' : 'Select all';
 }
 
 $('scan-clean').addEventListener('click', async () => {
@@ -211,18 +379,29 @@ $('scan-clean').addEventListener('click', async () => {
 });
 
 $('select-all').addEventListener('click', () => {
-  if (selected.size === candidates.length) selected.clear();
-  else candidates.forEach((_, i) => selected.add(i));
-  document.querySelectorAll('#clean-list input[type=checkbox]').forEach((box) => {
-    box.checked = selected.has(Number(box.dataset.i));
-  });
+  const checkAll = selectedCount !== candidates.length;
+  selectedMask.fill(checkAll ? 1 : 0);
+  selectedCount = checkAll ? candidates.length : 0;
+  const pool = $('clean-list')._pool;
+  if (pool) {
+    for (let i = 0; i < pool.length; i++) {
+      if (pool[i]._idx >= 0) pool[i]._refs.box.checked = checkAll;
+    }
+  }
   updateSelection();
 });
 
 $('apply-clean').addEventListener('click', async () => {
-  const paths = [...selected].map((i) => candidates[i].path);
-  if (!paths.length) return;
-  const total = [...selected].reduce((s, i) => s + (candidates[i].size || 0), 0);
+  if (!selectedCount) return;
+  const paths = [];
+  let total = 0;
+  for (let i = 0; i < candidates.length; i++) {
+    if (selectedMask[i]) {
+      const item = candidates[i];
+      paths.push(item.path);
+      total += item.size || 0;
+    }
+  }
   $('confirm-text').textContent = `${paths.length} item(s), about ${fmt(total)}, will be moved to the Recycle Bin. Only these exact paths are deleted.`;
   const dlg = $('confirm-dialog');
   dlg.returnValue = '';
@@ -240,34 +419,60 @@ $('apply-clean').addEventListener('click', async () => {
     panel.hidden = false;
     let removed = 0;
     const failed = [];
-    const removedPaths = [];
     for (const ev of events) {
-      if (ev.event === 'removed') { removed++; removedPaths.push(ev.path); }
+      if (ev.event === 'removed') removed++;
       if (ev.event === 'failed') failed.push(ev.path);
     }
     const complete = failed.length === 0 && removed === paths.length;
-    $('result-log').textContent = events.map((e) => JSON.stringify(e)).join('\n');
+    const maxLog = 200;
+    if (events.length <= maxLog) {
+      $('result-log').textContent = events.map((e) => JSON.stringify(e)).join('\n');
+    } else {
+      const head = events.slice(0, 100).map((e) => JSON.stringify(e));
+      const tail = events.slice(-50).map((e) => JSON.stringify(e));
+      $('result-log').textContent = `${head.join('\n')}\n… (${events.length - 150} more events omitted) …\n${tail.join('\n')}`;
+    }
     if (complete) {
       $('result-status').textContent = `${removed} removed`;
       $('result-status').className = 'pill ok';
       toast(`Done — ${removed} item(s) moved to the Recycle Bin.`);
-      selected.clear();
+      selectedCount = 0;
       renderClean({ items: [], total_bytes: 0, total_human: '0 B' });
     } else {
-      const missedPaths = failed.length
-        ? failed
-        : paths.filter((p) => !removedPaths.includes(p));
+      let missedPaths = failed;
+      if (!missedPaths.length) {
+        const removedSet = new Set();
+        for (const ev of events) {
+          if (ev.event === 'removed') removedSet.add(ev.path);
+        }
+        missedPaths = paths.filter((p) => !removedSet.has(p));
+      }
       // Keep only what actually failed. Removed paths no longer exist, and the
       // backend refuses a batch containing a missing path.
       const retry = new Set(missedPaths);
-      selected = new Set([...selected].filter((i) => retry.has(candidates[i].path)));
-      document.querySelectorAll('#clean-list input[type=checkbox]').forEach((box) => {
-        box.checked = retry.has(candidates[Number(box.dataset.i)].path);
-      });
+      let nextCount = 0;
+      for (let i = 0; i < candidates.length; i++) {
+        if (selectedMask[i] && retry.has(candidates[i].path)) {
+          selectedMask[i] = 1;
+          nextCount++;
+        } else {
+          selectedMask[i] = 0;
+        }
+      }
+      selectedCount = nextCount;
+      const pool = $('clean-list')._pool;
+      if (pool) {
+        for (let i = 0; i < pool.length; i++) {
+          const row = pool[i];
+          if (row._idx >= 0) row._refs.box.checked = selectedMask[row._idx] === 1;
+        }
+      }
       updateSelection();
       $('result-status').textContent = `${removed} of ${paths.length} removed — incomplete`;
       $('result-status').className = 'pill bad';
-      toast(`Incomplete — could not remove: ${missedPaths.join(', ')}. Only those remain selected for a retry.`, true);
+      const shown = missedPaths.slice(0, 5).join(', ');
+      const extra = missedPaths.length > 5 ? ` (+${missedPaths.length - 5} more)` : '';
+      toast(`Incomplete — could not remove: ${shown}${extra}. Only those remain selected for a retry.`, true);
     }
   } catch (e) {
     $('result-panel').hidden = false;
@@ -289,18 +494,40 @@ $('scan-analyze').addEventListener('click', async () => {
     const data = await invoke('analyze_dir', { path });
     const entries = data.entries || [];
     const list = $('analyze-list');
-    list.innerHTML = '';
-    if (!entries.length) { list.innerHTML = '<div class="empty">No entries found.</div>'; return; }
-    const max = Math.max(...entries.map((e) => e.size || 0), 1);
-    entries.forEach((e) => {
-      const row = document.createElement('div');
-      row.className = 'row';
-      row.innerHTML = `<div class="row-main"><div class="row-label"></div><div class="row-path"></div><div class="bar"><i style="width:${Math.max(e.size / max * 100, 2)}%"></i></div></div><div class="row-size"></div>`;
-      row.querySelector('.row-label').textContent = e.name;
-      row.querySelector('.row-path').textContent = e.path;
-      row.querySelector('.row-size').textContent = e.is_dir ? fmt(e.size) + '  ▸' : fmt(e.size);
-      list.appendChild(row);
-    });
+    if (!entries.length) {
+      teardownVirtualList(list);
+      list.dataset.count = '0';
+      list.innerHTML = '<div class="empty">No entries found.</div>';
+      return;
+    }
+    let max = 1;
+    for (let i = 0; i < entries.length; i++) {
+      const sz = entries[i].size || 0;
+      if (sz > max) max = sz;
+    }
+    const tpl = renderAnalyzeTpl();
+    mountVirtualList(
+      list,
+      entries,
+      () => {
+        const row = tpl.content.firstElementChild.cloneNode(true);
+        const main = row.firstElementChild;
+        row._refs = {
+          label: main.children[0],
+          path: main.children[1],
+          bar: main.children[2].firstElementChild,
+          size: main.nextElementSibling,
+        };
+        return row;
+      },
+      (row, e) => {
+        const r = row._refs;
+        r.label.textContent = e.name;
+        r.path.textContent = e.path;
+        r.bar.style.transform = `scaleX(${Math.max((e.size || 0) / max, 0.02)})`;
+        r.size.textContent = e._sizeStr || (e._sizeStr = e.is_dir ? fmt(e.size) + '  ▸' : fmt(e.size));
+      },
+    );
   } catch (e) {
     toast(String(e), true);
   } finally {
@@ -452,21 +679,25 @@ $('refresh-status').addEventListener('click', async () => {
   try {
     const data = await invoke('system_status');
     const cards = $('status-cards');
-    cards.innerHTML = '';
     const d = data && data.ok !== false ? data.data || data : null;
     const metrics = d && !d.error ? [
       ['Health', d.health_score ?? '—'],
       ['CPU', (d.cpu && d.cpu.usage != null) ? d.cpu.usage + '%' : '—'],
       ['Memory', d.memory && d.memory.total ? fmt(d.memory.total) : '—'],
     ] : [['Result', 'unavailable']];
+    const tpl = cards._tpl || (cards._tpl = (() => {
+      const t = document.createElement('template');
+      t.innerHTML = '<div class="card"><div class="card-label"></div><div class="card-value"></div></div>';
+      return t;
+    })());
+    const frag = document.createDocumentFragment();
     metrics.forEach(([label, value]) => {
-      const c = document.createElement('div');
-      c.className = 'card';
-      c.innerHTML = `<div class="card-label"></div><div class="card-value"></div>`;
-      c.querySelector('.card-label').textContent = label;
-      c.querySelector('.card-value').textContent = value;
-      cards.appendChild(c);
+      const c = tpl.content.firstElementChild.cloneNode(true);
+      c.firstElementChild.textContent = label;
+      c.lastElementChild.textContent = value;
+      frag.appendChild(c);
     });
+    cards.replaceChildren(frag);
     $('status-raw').textContent = JSON.stringify(data, null, 2);
   } catch (e) {
     $('status-raw').textContent = String(e);
@@ -478,14 +709,18 @@ $('preview-optimize').addEventListener('click', async () => {
   try {
     const data = await invoke('preview_optimize');
     const list = $('optimize-list');
-    list.innerHTML = '';
+    const tpl = list._tpl || (list._tpl = (() => {
+      const t = document.createElement('template');
+      t.innerHTML = '<div class="row"><div class="row-main"><div class="row-label"></div></div></div>';
+      return t;
+    })());
+    const frag = document.createDocumentFragment();
     (data.tasks || []).forEach((t) => {
-      const row = document.createElement('div');
-      row.className = 'row';
-      row.innerHTML = '<div class="row-main"><div class="row-label"></div></div>';
-      row.querySelector('.row-label').textContent = t.description || t.name;
-      list.appendChild(row);
+      const row = tpl.content.firstElementChild.cloneNode(true);
+      row.firstElementChild.firstElementChild.textContent = t.description || t.name;
+      frag.appendChild(row);
     });
+    list.replaceChildren(frag);
   } catch (e) { toast(String(e), true); }
 });
 
@@ -544,7 +779,19 @@ $('install-update').addEventListener('click', async () => {
   $('update-bar').style.width = '0%';
   setUpdateState('downloading…');
   $('update-detail').textContent = 'Downloading the installer from GitHub Releases. Scour will restart automatically.';
+  let unlisten = () => {};
   try {
+    unlisten = await listen(UPDATE_EVENT, (p) => {
+      if (p.phase === 'downloaded') {
+        $('update-bar').style.width = '100%';
+        setUpdateState('installing…');
+        $('update-detail').textContent = 'Download finished. Installing and restarting Scour…';
+        return;
+      }
+      const pct = Number(p.percent || 0);
+      $('update-bar').style.width = `${pct}%`;
+      setUpdateState(`downloading ${Math.round(pct)}%`);
+    });
     const result = await invoke('install_update');
     $('update-log').hidden = false;
     $('update-log').textContent = JSON.stringify(result, null, 2);
@@ -558,22 +805,19 @@ $('install-update').addEventListener('click', async () => {
     toast(String(e), true);
     $('update-progress').hidden = true;
   } finally {
+    unlisten();
     btn.disabled = false; btn.textContent = 'Update & restart';
     $('check-update').disabled = false;
   }
 });
 
-listen(UPDATE_EVENT, (p) => {
-  if (p.phase === 'downloaded') {
-    $('update-bar').style.width = '100%';
-    setUpdateState('installing…');
-    $('update-detail').textContent = 'Download finished. Installing and restarting Scour…';
-    return;
-  }
-  const pct = Number(p.percent || 0);
-  $('update-bar').style.width = `${pct}%`;
-  setUpdateState(`downloading ${Math.round(pct)}%`);
-});
+function renderAnalyzeTpl() {
+  return renderAnalyzeTpl._tpl || (renderAnalyzeTpl._tpl = (() => {
+    const t = document.createElement('template');
+    t.innerHTML = '<div class="row"><div class="row-main"><div class="row-label"></div><div class="row-path"></div><div class="bar"><i></i></div></div><div class="row-size"></div></div>';
+    return t;
+  })());
+}
 
 (async function init() {
   try {
@@ -584,10 +828,5 @@ listen(UPDATE_EVENT, (p) => {
   } catch (e) {
     $('engine-label').textContent = 'engine: unavailable';
     $('engine-dot').className = 'dot bad';
-  }
-  try {
-    $('update-current').textContent = await invoke('app_version');
-  } catch (e) {
-    $('update-current').textContent = 'unknown';
   }
 })();
