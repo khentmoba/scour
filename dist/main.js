@@ -2,8 +2,6 @@
 // outside it, a small mock keeps the UI usable for browser-based visual checks.
 const $ = (id) => document.getElementById(id);
 
-// In a plain browser, install a tiny shim with the same invoke/callback shape as
-// Tauri's bridge so the whole UI — including update progress — can be previewed.
 if (typeof window.__TAURI_INTERNALS__?.invoke !== 'function') {
   const callbacks = new Map();
   let nextId = 1;
@@ -19,8 +17,6 @@ async function invoke(cmd, args = {}) {
   return window.__TAURI_INTERNALS__.invoke(cmd, args);
 }
 
-// Subscribe to a Rust `app.emit` event using the bridge primitives the Tauri
-// runtime already ships, so no npm/event package is needed in this no-bundler app.
 async function listen(event, handler) {
   const bridge = window.__TAURI_INTERNALS__;
   if (typeof bridge.invoke !== 'function' || typeof bridge.transformCallback !== 'function') {
@@ -45,6 +41,7 @@ function mockEmit(event, payload) {
   }
 }
 
+const GB = 1024 ** 3;
 function mockInvoke(cmd, args) {
   const wait = () => new Promise((r) => setTimeout(r, 220));
   if (cmd === 'plugin:event|listen') {
@@ -60,20 +57,15 @@ function mockInvoke(cmd, args) {
   }
   if (cmd === 'app_version') return wait().then(() => '0.1.0');
   if (cmd === 'check_update') return wait().then(() => ({
-    available: true,
-    current_version: '0.1.0',
-    version: '0.2.0',
-    notes: 'Mock release — installation is disabled in the browser preview.',
-    date: '2026-11-17',
+    available: true, current_version: '0.1.0', version: '0.2.0',
+    notes: 'Mock release — installation is disabled in the browser preview.', date: '2026-11-17',
   }));
   if (cmd === 'install_update') {
     return new Promise((resolve) => {
       let sent = 0;
       const timer = setInterval(() => {
         sent += 1;
-        mockEmit('scour://update-progress', {
-          phase: 'download', downloaded: sent * 25, total: 100, percent: sent * 25,
-        });
+        mockEmit('scour://update-progress', { phase: 'download', downloaded: sent * 25, total: 100, percent: sent * 25 });
         if (sent === 4) {
           clearInterval(timer);
           mockEmit('scour://update-progress', { phase: 'downloaded', percent: 100 });
@@ -83,13 +75,44 @@ function mockInvoke(cmd, args) {
     });
   }
   if (cmd === 'engine_version') return wait().then(() => ({ version: '0.1.0', engine: 'burrow-engine' }));
-  if (cmd === 'scan_clean') return wait().then(() => ({
-    dry_run: true, total_bytes: 482100000, total_human: '482.1MB', items: [
-      { path: 'C:\\Users\\You\\AppData\\Local\\Temp', label: 'Temporary files', size: 214700000, size_human: '214.7MB' },
-      { path: 'C:\\Users\\You\\.cache', label: 'Application cache', size: 151600000, size_human: '151.6MB' },
-      { path: 'C:\\Users\\You\\Downloads\\old-installers', label: 'Old installers', size: 115800000, size_human: '115.8MB' },
-    ],
-  }));
+  if (cmd === 'scan_all') {
+    const items = [
+      { path: 'C:\\Users\\You\\.cache\\huggingface', label: 'Hugging Face models', category: 'Developer', bytes: 15.0 * GB, human: '15.0 GB', detail: 'Downloaded again when needed.', removable: true },
+      { path: 'C:\\Users\\You\\source\\app\\node_modules', label: 'Node modules', category: 'Developer', bytes: 8.4 * GB, human: '8.4 GB', detail: 'Installed again with npm install.', removable: true },
+      { path: 'C:\\Users\\You\\Downloads\\setup-old.exe', label: 'setup-old.exe', category: 'Installers', bytes: 3.1 * GB, human: '3.1 GB', detail: 'Installer older than 30 days.', removable: true },
+      { path: 'C:\\Users\\You\\AppData\\Local\\Temp', label: 'Temporary files', category: 'Caches', bytes: 2.3 * GB, human: '2.3 GB', detail: 'Files apps left behind.', removable: true },
+      { path: 'C:\\Users\\You\\.cache\\ms-playwright', label: 'Playwright browsers', category: 'Developer', bytes: 1.6 * GB, human: '1.6 GB', detail: 'Reinstalled when needed.', removable: true },
+      { path: 'C:\\Users\\You\\source\\web\\.next', label: 'Next.js build', category: 'Developer', bytes: 0.9 * GB, human: '923.0 MB', detail: 'Rebuilt on the next build.', removable: true },
+      { path: 'C:\\Users\\You\\.cargo\\registry', label: 'Cargo registry', category: 'Developer', bytes: 0.7 * GB, human: '717.0 MB', detail: 'Downloaded again when needed.', removable: true },
+      { path: 'C:\\Users\\You\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Cache', label: 'Chrome cache', category: 'Caches', bytes: 0.4 * GB, human: '410.0 MB', detail: 'Regenerated automatically.', removable: true },
+      { path: 'C:\\Users\\You\\.t3\\worktrees\\old-feature', label: 'Clean worktree', category: 'Developer', bytes: 0.2 * GB, human: '205.0 MB', detail: 'No local changes.', removable: true },
+    ];
+    const total = items.reduce((s, i) => s + i.bytes, 0);
+    return wait().then(() => ({
+      volume_total: 512 * GB,
+      volume_used: 357.8 * GB,
+      disk: [
+        { name: 'Developer', bytes: 112.0 * GB, human: '112.0 GB' },
+        { name: 'Apps', bytes: 52.6 * GB, human: '52.6 GB' },
+        { name: 'Photos', bytes: 38.6 * GB, human: '38.6 GB' },
+        { name: 'Documents', bytes: 31.7 * GB, human: '31.7 GB' },
+        { name: 'Movies', bytes: 24.1 * GB, human: '24.1 GB' },
+        { name: 'Caches', bytes: 22.0 * GB, human: '22.0 GB' },
+        { name: 'Music', bytes: 12.1 * GB, human: '12.1 GB' },
+        { name: 'Trash', bytes: 6.4 * GB, human: '6.4 GB' },
+      ],
+      items,
+      total_bytes: total,
+      total_human: fmt(total),
+      notes: [],
+      scanned_at: Date.now() / 1000,
+    }));
+  }
+  if (cmd === 'app_inventory') return wait().then(() => [
+    { name: 'Visual Studio Build Tools', bytes: 12.4 * GB, human: '12.4 GB', location: 'C:\\Program Files (x86)\\Microsoft Visual Studio', id: 'vs_buildtools' },
+    { name: 'Google Chrome', bytes: 1.1 * GB, human: '1.1 GB', location: 'C:\\Program Files\\Google\\Chrome\\Application', id: 'Chrome' },
+    { name: 'Node.js', bytes: 186.0 * 1024 * 1024, human: '186.0 MB', location: 'C:\\Program Files\\nodejs', id: 'nodejs' },
+  ]);
   if (cmd === 'analyze_dir') return wait().then(() => ({
     path: args.path, overview: false, entries: [
       { name: 'Downloads', path: args.path + '\\Downloads', size: 2147000000, is_dir: true },
@@ -98,9 +121,7 @@ function mockInvoke(cmd, args) {
       { name: 'notes.txt', path: args.path + '\\notes.txt', size: 12043, is_dir: false },
     ],
   }));
-  if (cmd === 'find_index') return wait().then(() => ({
-    base: args.folder, total_matched: 4, total_files: 4, items: [],
-  }));
+  if (cmd === 'find_index') return wait().then(() => ({ base: args.folder, total_matched: 4, total_files: 4, items: [] }));
   if (cmd === 'find_search') {
     const all = [
       { path: args.folder + '\\setup-installer.exe', name: 'setup-installer.exe', size: 115800000, modified: 1750000000, score: 120 },
@@ -113,8 +134,8 @@ function mockInvoke(cmd, args) {
     return wait().then(() => ({ base: args.folder, total_matched: items.length, total_files: 4, items }));
   }
   if (cmd === 'apply_clean') return wait().then(() => [
-    { event: 'removed', path: args.paths[0], bytes: 214700000 },
-    { event: 'done', dry_run: false, freed_bytes: 214700000, count: args.paths.length },
+    ...args.paths.map((path) => ({ event: 'removed', path, bytes: 214700000 })),
+    { event: 'done', dry_run: false, freed_bytes: 214700000 * args.paths.length, count: args.paths.length },
   ]);
   if (cmd === 'system_status') return wait().then(() => ({ ok: false, error: { message: 'system metrics unavailable on this platform', kind: 'unsupported' } }));
   if (cmd === 'preview_optimize') return wait().then(() => ({ dry_run: true, tasks: [
@@ -126,7 +147,6 @@ function mockInvoke(cmd, args) {
 
 const LOG_1024 = Math.log(1024);
 const SIZE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB'];
-
 function fmt(bytes) {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
   const i = Math.min(Math.floor(Math.log(bytes) / LOG_1024), SIZE_UNITS.length - 1);
@@ -149,7 +169,10 @@ const viewMap = new Map();
 document.querySelectorAll('.nav-item[data-view]').forEach((b) => {
   const key = b.dataset.view;
   viewMap.set(key, { nav: b, viewEl: $(`view-${key}`) });
-  b.addEventListener('click', () => show(key));
+  b.addEventListener('click', () => {
+    show(key);
+    if (key === 'clean' && overview && !overview.loaded) runScan();
+  });
 });
 
 let appVersionLoaded = false;
@@ -170,36 +193,545 @@ function show(view) {
   }
 }
 
-let candidates = [];
-let selectedMask = new Uint8Array(0);
-let selectedCount = 0;
+/* =========================================================================
+   OVERVIEW — dithered disk bar + treemap, inspired by Beautiful Disk.
+   All dots are drawn on a grid with a Bayer/hash threshold; no image assets.
+   ========================================================================= */
+const TONES = {
+  Apps:      { base: '#0f88e6', dark: '#054476', light: '#88c2fd' },
+  Developer: { base: '#129f4b', dark: '#015021', light: '#7cd490' },
+  Photos:    { base: '#d34895', dark: '#6a244a', light: '#fa99c8' },
+  Movies:    { base: '#9863e4', dark: '#4c3172', light: '#c8abfd' },
+  Documents: { base: '#0197a3', dark: '#034b52', light: '#2dd4e3' },
+  Music:     { base: '#9d8306', dark: '#4e4107', light: '#d6bb51' },
+  System:    { base: '#81858c', dark: '#404246', light: '#b9bdc2' },
+  Caches:    { base: '#c76809', dark: '#663200', light: '#fca568' },
+  Trash:     { base: '#e04746', dark: '#712423', light: '#fd9f97' },
+  Installers:{ base: '#c0843a', dark: '#5c3a12', light: '#f5c787' },
+};
+const CAT_ORDER = ['Apps', 'Developer', 'Photos', 'Movies', 'Documents', 'Music', 'System', 'Caches', 'Trash'];
+const BAYER = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
+const bayer = (c, r) => (BAYER[(r & 3) * 4 + (c & 3)] + 0.5) / 16;
+function hash(x, y) {
+  let h = Math.imul(x, 374761393) + Math.imul(y, 668265263);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
+}
+function rgba(hex, a) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+function roundRect(ctx, x, y, w, h, r) {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
+}
+function dot(ctx, c, r, cell, size, ox = 0, oy = 0) {
+  ctx.fillRect(ox + c * cell + (cell - size) / 2, oy + r * cell + (cell - size) / 2, size, size);
+}
 
-const ROW_HEIGHT = 64;
-const OVERSCAN = 4;
+const overview = {
+  loaded: false,
+  scanning: false,
+  payload: null,
+  selected: new Set(),
+  hoverCat: null,
+  hoverTile: null,
+  tiles: [],
+  raf: 0,
+  animUntil: 0,
+};
 
+function fitCanvas(canvas) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth || 600;
+  const h = canvas.clientHeight || 300;
+  const nw = Math.max(1, Math.round(w * dpr));
+  const nh = Math.max(1, Math.round(h * dpr));
+  if (canvas.width !== nw || canvas.height !== nh) {
+    canvas.width = nw;
+    canvas.height = nh;
+  }
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, w, h };
+}
+
+function drawBar() {
+  const p = overview.payload;
+  const canvas = $('disk-bar');
+  const { ctx, w, h } = fitCanvas(canvas);
+  ctx.clearRect(0, 0, w, h);
+  roundRect(ctx, 0.5, 0.5, w - 1, h - 1, 7);
+  ctx.fillStyle = '#1b1b1e';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,.06)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  const CELL = 5, DOT = 3;
+  const cols = Math.floor(w / CELL), rows = Math.floor(h / CELL);
+  const total = p.volume_total || 1;
+  const used = p.volume_used || 0;
+  const usedCols = Math.min(cols, Math.floor((cols * used) / total));
+  const flicker = Math.floor(Date.now() / 50);
+
+  ctx.fillStyle = 'rgba(255,255,255,.045)';
+  for (let c = usedCols; c < cols; c++) {
+    for (let r = 0; r < rows; r++) dot(ctx, c, r, CELL, 2);
+  }
+
+  let col = 0;
+  for (const name of CAT_ORDER) {
+    const slice = (p.disk || []).find((s) => s.name === name);
+    if (!slice || !slice.bytes) continue;
+    const n = Math.max(1, Math.round((cols * slice.bytes) / total));
+    const ends = Math.min(n, cols - col);
+    if (ends <= 0) break;
+    const tone = TONES[name] || TONES.System;
+    const glow = overview.hoverCat ? (overview.hoverCat === name ? 1 : 0.15) : 0.45;
+
+    roundRect(ctx, col * CELL + 1, 1, ends * CELL - 2, h - 2, 6);
+    ctx.fillStyle = rgba(tone.dark, 0.22 + 0.3 * glow);
+    ctx.fill();
+    ctx.strokeStyle = rgba(tone.base, 0.35 + 0.65 * glow);
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    for (let k = 0; k < ends; k++) {
+      for (let r = 0; r < rows; r++) {
+        const fy = r / Math.max(1, rows - 1);
+        const near = Math.max(0, 1 - (ends - 1 - k) / 8);
+        const density = (0.62 - 0.5 * fy) * (0.3 + 0.7 * glow) + 0.28 * glow * glow + near * 0.9;
+        if (hash((col + k + flicker) & 255, r) >= density) continue;
+        ctx.fillStyle = rgba(tone.light, Math.min(1, 0.4 + 0.6 * Math.max(glow, near)));
+        dot(ctx, col + k, r, CELL, DOT);
+      }
+    }
+    col += n;
+  }
+}
+
+function renderLegend() {
+  const p = overview.payload;
+  const box = $('disk-legend');
+  const frag = document.createDocumentFragment();
+  for (const name of CAT_ORDER) {
+    const slice = (p.disk || []).find((s) => s.name === name);
+    if (!slice || !slice.bytes) continue;
+    const el = document.createElement('div');
+    el.className = 'legend-item' + (overview.hoverCat && overview.hoverCat !== name ? ' dim' : '');
+    const sw = document.createElement('span');
+    sw.className = 'legend-swatch';
+    sw.style.background = (TONES[name] || TONES.System).base;
+    const nm = document.createElement('span');
+    nm.className = 'legend-name';
+    nm.textContent = name === 'System' ? 'System data' : name;
+    const sz = document.createElement('span');
+    sz.className = 'legend-size';
+    sz.textContent = slice.human || fmt(slice.bytes);
+    el.append(sw, nm, sz);
+    el.addEventListener('mouseenter', () => { overview.hoverCat = name; refresh(); showCatStatus(name); });
+    el.addEventListener('mouseleave', () => { overview.hoverCat = null; refresh(); defaultStatus(); });
+    frag.appendChild(el);
+  }
+  box.replaceChildren(frag);
+}
+
+function showCatStatus(name) {
+  const p = overview.payload;
+  const slice = (p.disk || []).find((s) => s.name === name);
+  if (!slice) return;
+  const detail = {
+    Apps: 'The largest app is the biggest slice here.',
+    Developer: 'Build output and downloaded packages.',
+    Photos: 'Pictures and photos in your profile.',
+    Movies: 'Videos in your profile.',
+    Documents: 'Files in Documents, Desktop and Downloads.',
+    Music: 'Audio files in your profile.',
+    System: 'Windows, app data and files outside your folders.',
+    Caches: 'Apps rebuild these when they need them again.',
+    Trash: 'Things you have already deleted.',
+  }[name] || '';
+  $('disk-status').textContent = `${name === 'System' ? 'System data' : name} — ${slice.human || fmt(slice.bytes)}. ${detail}`;
+}
+function defaultStatus() {
+  const p = overview.payload;
+  const available = p.volume_total && p.volume_used ? p.volume_total - p.volume_used : 0;
+  $('disk-status').textContent = available ? `${fmt(available)} available` : 'Ready';
+}
+
+function layoutTreemap(items, x, y, w, h) {
+  if (!items.length) return [];
+  const sorted = [...items].sort((a, b) => b.bytes - a.bytes);
+  const out = [];
+  const split = (list, rx, ry, rw, rh) => {
+    if (!list.length || rw <= 0 || rh <= 0) return;
+    if (list.length === 1) {
+      out.push({ item: list[0], x: rx, y: ry, w: rw, h: rh });
+      return;
+    }
+    let sum = list.reduce((s, i) => s + i.bytes, 0) || 1;
+    let acc = 0, cut = 0;
+    for (; cut < list.length - 1; cut++) { acc += list[cut].bytes; if (acc >= sum / 2) break; }
+    const a = list.slice(0, cut + 1), b = list.slice(cut + 1);
+    const sa = a.reduce((s, i) => s + i.bytes, 0);
+    const sb = b.reduce((s, i) => s + i.bytes, 0);
+    const t = sa + sb || 1;
+    if (rw >= rh) {
+      const w1 = rw * (sa / t);
+      split(a, rx, ry, w1, rh);
+      split(b, rx + w1, ry, rw - w1, rh);
+    } else {
+      const h1 = rh * (sa / t);
+      split(a, rx, ry, rw, h1);
+      split(b, rx, ry + h1, rw, rh - h1);
+    }
+  };
+  split(sorted, x, y, w, h);
+  return out;
+}
+
+function drawTreemap() {
+  const p = overview.payload;
+  const canvas = $('treemap');
+  const { ctx, w, h } = fitCanvas(canvas);
+  ctx.clearRect(0, 0, w, h);
+  const items = (p.items || []).filter((i) => i.removable !== false);
+  overview.tiles = layoutTreemap(items, 1, 1, w - 2, h - 2);
+  const CELL = 4, DOT = 3, GAP = 2;
+  const max = Math.max(...items.map((i) => i.bytes), 1);
+
+  for (const tile of overview.tiles) {
+    const { x, y, w: tw, h: th, item } = tile;
+    const sel = overview.selected.has(item.path);
+    const hot = overview.hoverTile === item.path;
+    const tone = TONES[item.category] || TONES.Developer;
+    const glow = sel ? (hot ? 1 : 0.6) : (hot ? 0.5 : 0);
+
+    roundRect(ctx, x + GAP, y + GAP, Math.max(0, tw - GAP * 2), Math.max(0, th - GAP * 2), 7);
+    ctx.fillStyle = sel ? rgba(tone.dark, 0.18 + 0.12 * glow) : '#1b1b1e';
+    ctx.fill();
+    ctx.strokeStyle = sel ? rgba(tone.base, 0.45 + 0.55 * glow) : `rgba(255,255,255,${0.05 + 0.08 * glow})`;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x + GAP, y + GAP, Math.max(0, tw - GAP * 2), Math.max(0, th - GAP * 2));
+    ctx.clip();
+    const cols = Math.ceil((tw - GAP * 2) / CELL);
+    const rows = Math.ceil((th - GAP * 2) / CELL);
+    for (let c = 0; c < cols; c++) {
+      for (let r = 0; r < rows; r++) {
+        const u = c / Math.max(1, cols - 1);
+        const v = r / Math.max(1, rows - 1);
+        if (sel) {
+          if (u < 0.38) continue; // keep the label band clear
+          const density = (0.1 + 0.82 * Math.pow(v, 1.3) * (0.6 + 0.4 * u)) * (0.6 + 0.4 * glow);
+          if (bayer(c, r) >= density) continue;
+          ctx.fillStyle = rgba(tone.light, 0.55 + 0.45 * glow);
+        } else {
+          if ((c + r) % 4 !== 0) continue;
+          ctx.fillStyle = `rgba(255,255,255,${0.13 + 0.1 * glow})`;
+        }
+        dot(ctx, c, r, CELL, DOT, x + GAP, y + GAP);
+      }
+    }
+    ctx.restore();
+
+    const tiny = tw < 122 || th < 62;
+    const small = tw < 140 || th < 84;
+    const pad = small ? 7 : 11;
+    const innerW = Math.max(0, tw - GAP * 2 - pad * 2);
+    ctx.textBaseline = 'top';
+    if (!tiny && innerW > 24) {
+      ctx.fillStyle = sel ? '#ededef' : '#77777c';
+      ctx.font = `${small ? 12 : 13}px -apple-system, "Segoe UI", sans-serif`;
+      ctx.fillText(item.label || 'Untitled', x + GAP + pad, y + GAP + pad, innerW);
+    }
+    if (!tiny && th >= 70 && tw >= 96) {
+      ctx.fillStyle = sel ? rgba(tone.light, 0.95) : '#8b8b90';
+      ctx.font = `bold ${small ? 10 : 12}px Menlo, Consolas, monospace`;
+      ctx.fillText(item.human || fmt(item.bytes), x + GAP + pad, y + th - GAP - pad - (small ? 10 : 12), innerW);
+    }
+    void max;
+  }
+}
+
+function updateSelectionUI() {
+  const p = overview.payload;
+  const chosen = (p.items || []).filter((i) => i.removable !== false && overview.selected.has(i.path));
+  const bytes = chosen.reduce((s, i) => s + i.bytes, 0);
+  $('clean-total').textContent = `${fmt(bytes)} can go`;
+  $('clean-sub').textContent = chosen.length
+    ? `${chosen.length} item${chosen.length === 1 ? '' : 's'} selected · moved to the Recycle Bin`
+    : `${(p.items || []).length} things found · tick what you trust`;
+  $('apply-clean').disabled = chosen.length === 0;
+  $('clean-hint').textContent = chosen.length
+    ? `${chosen.length} selected. Only these exact paths are deleted, and only to the Recycle Bin.`
+    : 'Deletions go to the Recycle Bin — nothing is permanent.';
+}
+
+function positionTip(clientX, clientY) {
+  const tip = $('item-tip');
+  const pad = 14;
+  const w = tip.offsetWidth || 360;
+  const h = tip.offsetHeight || 120;
+  let x = clientX + 16, y = clientY + 16;
+  if (x + w > window.innerWidth - pad) x = clientX - w - 16;
+  if (y + h > window.innerHeight - pad) y = window.innerHeight - h - pad;
+  tip.style.left = `${Math.max(pad, x)}px`;
+  tip.style.top = `${Math.max(pad, y)}px`;
+}
+
+function showItemTip(item, clientX, clientY) {
+  const tip = $('item-tip');
+  const tone = TONES[item.category] || TONES.Developer;
+  tip.innerHTML = `
+    <div class="tip-title"><span class="tip-name"></span><span class="tip-size"></span></div>
+    <div class="tip-note"></div>
+    <div class="tip-row"><span class="tip-path"></span><span class="tip-amt"></span></div>`;
+  tip.querySelector('.tip-name').textContent = item.label;
+  tip.querySelector('.tip-name').style.color = tone.light;
+  tip.querySelector('.tip-size').textContent = item.human || fmt(item.bytes);
+  tip.querySelector('.tip-note').textContent = item.detail || '';
+  tip.querySelector('.tip-path').textContent = item.path;
+  tip.querySelector('.tip-amt').textContent = 'Recycle Bin';
+  tip.hidden = false;
+  positionTip(clientX, clientY);
+}
+
+function refresh() {
+  if (!overview.payload) return;
+  drawBar();
+  drawTreemap();
+  updateSelectionUI();
+}
+function animate() {
+  const now = performance.now();
+  if (now < overview.animUntil) {
+    drawBar();
+    overview.raf = requestAnimationFrame(animate);
+  } else {
+    overview.raf = 0;
+  }
+}
+function kick(ms = 400) {
+  overview.animUntil = performance.now() + ms;
+  if (!overview.raf) overview.raf = requestAnimationFrame(animate);
+}
+
+async function runScan() {
+  if (overview.scanning) return;
+  overview.scanning = true;
+  const btn = $('scan-clean');
+  btn.disabled = true;
+  btn.textContent = 'Scanning…';
+  $('clean-sub').textContent = 'Looking for things you can clear';
+  $('disk-status').textContent = 'Calculating…';
+  try {
+    const payload = await invoke('scan_all');
+    overview.payload = payload;
+    overview.loaded = true;
+    overview.selected = new Set((payload.items || []).filter((i) => i.removable !== false).map((i) => i.path));
+    overview.hoverCat = null;
+    overview.hoverTile = null;
+    const used = payload.volume_used || 0;
+    const total = payload.volume_total || 0;
+    $('disk-used').textContent = fmt(used);
+    $('disk-of').textContent = total ? `of ${fmt(total)} used` : '';
+    renderLegend();
+    defaultStatus();
+    refresh();
+    kick(650);
+    if (payload.notes && payload.notes.length) toast(payload.notes[0]);
+  } catch (e) {
+    $('disk-status').textContent = 'scan failed';
+    toast(String(e), true);
+  } finally {
+    overview.scanning = false;
+    btn.disabled = false;
+    btn.textContent = 'Rescan';
+  }
+}
+
+$('scan-clean').addEventListener('click', runScan);
+
+$('disk-bar').addEventListener('mousemove', (e) => {
+  const p = overview.payload;
+  if (!p || !p.volume_total) return;
+  const rect = e.currentTarget.getBoundingClientRect();
+  const frac = (e.clientX - rect.left) / rect.width;
+  let acc = 0;
+  let found = null;
+  for (const name of CAT_ORDER) {
+    const s = (p.disk || []).find((x) => x.name === name);
+    if (!s || !s.bytes) continue;
+    const share = s.bytes / p.volume_total;
+    if (frac >= acc && frac < acc + share) { found = name; break; }
+    acc += share;
+  }
+  if (found !== overview.hoverCat) {
+    overview.hoverCat = found;
+    renderLegend();
+    drawBar();
+    if (found) showCatStatus(found); else defaultStatus();
+  }
+});
+$('disk-bar').addEventListener('mouseleave', () => {
+  overview.hoverCat = null;
+  renderLegend();
+  drawBar();
+  defaultStatus();
+});
+
+$('treemap').addEventListener('mousemove', (e) => {
+  const rect = e.currentTarget.getBoundingClientRect();
+  const x = e.clientX - rect.left, y = e.clientY - rect.top;
+  const tile = overview.tiles.find((t) => x >= t.x && x <= t.x + t.w && y >= t.y && y <= t.y + t.h);
+  const path = tile ? tile.item.path : null;
+  if (path !== overview.hoverTile) {
+    overview.hoverTile = path;
+    drawTreemap();
+  }
+  if (tile) showItemTip(tile.item, e.clientX, e.clientY);
+  else $('item-tip').hidden = true;
+});
+$('treemap').addEventListener('mouseleave', () => {
+  overview.hoverTile = null;
+  $('item-tip').hidden = true;
+  drawTreemap();
+});
+$('treemap').addEventListener('click', (e) => {
+  const rect = e.currentTarget.getBoundingClientRect();
+  const x = e.clientX - rect.left, y = e.clientY - rect.top;
+  const tile = overview.tiles.find((t) => x >= t.x && x <= t.x + t.w && y >= t.y && y <= t.y + t.h);
+  if (!tile) return;
+  if (overview.selected.has(tile.item.path)) overview.selected.delete(tile.item.path);
+  else overview.selected.add(tile.item.path);
+  drawTreemap();
+  updateSelectionUI();
+});
+window.addEventListener('resize', () => refresh());
+
+$('apply-clean').addEventListener('click', async () => {
+  const chosen = (overview.payload.items || []).filter((i) => i.removable !== false && overview.selected.has(i.path));
+  if (!chosen.length) return;
+  const paths = chosen.map((i) => i.path);
+  const bytes = chosen.reduce((s, i) => s + i.bytes, 0);
+  $('confirm-text').textContent = `${paths.length} item(s), about ${fmt(bytes)}, will be moved to the Recycle Bin. Only these exact paths are deleted.`;
+  const dlg = $('confirm-dialog');
+  dlg.returnValue = '';
+  dlg.showModal();
+  const choice = await new Promise((resolve) => {
+    dlg.addEventListener('close', () => resolve(dlg.returnValue), { once: true });
+  });
+  if (choice !== 'yes') return;
+
+  const btn = $('apply-clean');
+  btn.disabled = true;
+  btn.textContent = 'Clearing…';
+  try {
+    const events = await invoke('apply_clean', { paths });
+    const panel = $('result-panel');
+    panel.hidden = false;
+    let removed = 0;
+    const failed = [];
+    for (const ev of events) {
+      if (ev.event === 'removed') removed++;
+      if (ev.event === 'failed') failed.push(ev.path);
+    }
+    $('result-log').textContent = events.map((e) => JSON.stringify(e)).join('\n');
+    if (failed.length === 0) {
+      $('result-status').textContent = `${removed} removed`;
+      $('result-status').className = 'pill ok';
+      toast(`Done — ${removed} item(s) moved to the Recycle Bin.`);
+      overview.payload.items = overview.payload.items.filter((i) => !paths.includes(i.path));
+      overview.selected.clear();
+      refresh();
+      kick(500);
+    } else {
+      $('result-status').textContent = `${removed} of ${paths.length} removed — incomplete`;
+      $('result-status').className = 'pill bad';
+      toast(`Could not remove ${failed.length} item(s). Only those remain selected.`, true);
+      overview.selected = new Set(failed);
+      refresh();
+    }
+  } catch (e) {
+    $('result-panel').hidden = false;
+    $('result-status').textContent = 'failed';
+    $('result-status').className = 'pill bad';
+    $('result-log').textContent = String(e);
+    toast(String(e), true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Clear';
+  }
+});
+
+/* ===================== APPS (read-only inventory) ===================== */
+async function loadApps() {
+  const btn = $('apps-refresh');
+  btn.disabled = true;
+  try {
+    const apps = await invoke('app_inventory');
+    $('apps-list')._loaded = true;
+    $('apps-count').textContent = `${apps.length} apps`;
+    const list = $('apps-list');
+    if (!apps.length) {
+      list.innerHTML = '<div class="empty">No installed apps were reported.</div>';
+      return;
+    }
+    let max = 1;
+    for (const a of apps) max = Math.max(max, a.bytes || 0);
+    mountVirtualList(
+      list,
+      apps,
+      () => {
+        const row = document.createElement('div');
+        row.className = 'row';
+        row.innerHTML = '<div class="row-main"><div class="row-label"></div><div class="row-path"></div><div class="bar"><i></i></div></div><div class="row-size"></div>';
+        const main = row.firstElementChild;
+        row._refs = { label: main.children[0], path: main.children[1], bar: main.children[2].firstElementChild, size: main.nextElementSibling };
+        return row;
+      },
+      (row, a) => {
+        const r = row._refs;
+        r.label.textContent = a.name;
+        r.path.textContent = a.location || a.id;
+        r.bar.style.transform = `scaleX(${Math.max((a.bytes || 0) / max, 0.02)})`;
+        r.size.textContent = a.human || fmt(a.bytes);
+      }
+    );
+  } catch (e) {
+    toast(String(e), true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+$('apps-refresh').addEventListener('click', loadApps);
+viewMap.get('apps').nav.addEventListener('click', () => { if (!$('apps-list')._pool && !$('apps-list')._loaded) loadApps(); });
+
+/* ===================== ANALYZE ===================== */
 function teardownVirtualList(list) {
-  if (list._onScroll) {
-    list.removeEventListener('scroll', list._onScroll);
-    list._onScroll = null;
-  }
-  if (list._raf) {
-    cancelAnimationFrame(list._raf);
-    list._raf = 0;
-  }
-  if (list._ro) {
-    list._ro.disconnect();
-    list._ro = null;
-  }
+  if (list._onScroll) { list.removeEventListener('scroll', list._onScroll); list._onScroll = null; }
+  if (list._raf) { cancelAnimationFrame(list._raf); list._raf = 0; }
+  if (list._ro) { list._ro.disconnect(); list._ro = null; }
   list._pool = null;
 }
 
 function mountVirtualList(list, items, createRow, updateRow) {
   teardownVirtualList(list);
   list.dataset.count = String(items.length);
-  if (!items.length) {
-    return;
-  }
+  if (!items.length) return;
   let viewH = list.clientHeight || 420;
+  const ROW_HEIGHT = 64, OVERSCAN = 4;
   const spacer = document.createElement('div');
   spacer.className = 'list-spacer';
   spacer.style.height = `${items.length * ROW_HEIGHT}px`;
@@ -209,19 +741,15 @@ function mountVirtualList(list, items, createRow, updateRow) {
   list.replaceChildren(spacer);
   list.scrollTop = 0;
 
-  const pool = [];
-  const free = [];
-  const activeSlots = [];
+  const pool = [], free = [], activeSlots = [];
   list._pool = pool;
-  let lastStart = -1;
-  let lastEnd = -1;
+  let lastStart = -1, lastEnd = -1;
   const paint = (force = false) => {
     const scrollTop = list.scrollTop;
     const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
     const end = Math.min(items.length, Math.ceil((scrollTop + viewH) / ROW_HEIGHT) + OVERSCAN);
     if (!force && start === lastStart && end === lastEnd) return;
-    lastStart = start;
-    lastEnd = end;
+    lastStart = start; lastEnd = end;
     const needed = end - start;
     let newFrag = null;
     if (pool.length < needed) {
@@ -233,20 +761,15 @@ function mountVirtualList(list, items, createRow, updateRow) {
         newFrag.appendChild(node);
       }
     }
-    if (force) {
-      for (let k = 0; k < pool.length; k++) pool[k]._idx = -1;
-    }
+    if (force) for (let k = 0; k < pool.length; k++) pool[k]._idx = -1;
     free.length = 0;
     if (activeSlots.length < needed) activeSlots.length = needed;
     activeSlots.fill(0, 0, needed);
     for (let k = 0; k < pool.length; k++) {
       const node = pool[k];
       const idx = node._idx;
-      if (idx >= start && idx < end) {
-        activeSlots[idx - start] = 1;
-      } else {
-        free.push(node);
-      }
+      if (idx >= start && idx < end) activeSlots[idx - start] = 1;
+      else free.push(node);
     }
     for (let k = 0; k < needed; k++) {
       if (activeSlots[k]) continue;
@@ -258,232 +781,33 @@ function mountVirtualList(list, items, createRow, updateRow) {
       updateRow(node, items[idx], idx);
     }
     for (let k = 0; k < free.length; k++) {
-      const node = free[k];
-      if (!node.style.visibility) node.style.visibility = 'hidden';
-      node._idx = -1;
+      free[k].style.visibility = 'hidden';
+      free[k]._idx = -1;
     }
     if (newFrag) viewport.appendChild(newFrag);
   };
-
   if (typeof ResizeObserver === 'function') {
     list._ro = new ResizeObserver(() => {
-      const h = list.clientHeight || 420;
-      if (h !== viewH) {
-        viewH = h;
-        paint(false);
-      }
+      const hh = list.clientHeight || 420;
+      if (hh !== viewH) { viewH = hh; paint(false); }
     });
     list._ro.observe(list);
   }
-
   list._onScroll = () => {
     if (list._raf) return;
-    list._raf = requestAnimationFrame(() => {
-      list._raf = 0;
-      paint(false);
-    });
+    list._raf = requestAnimationFrame(() => { list._raf = 0; paint(false); });
   };
   list.addEventListener('scroll', list._onScroll, { passive: true });
   paint(true);
 }
 
-function renderClean(data) {
-  candidates = Array.isArray(data.items) ? data.items : [];
-  selectedMask = new Uint8Array(candidates.length);
-  selectedMask.fill(1);
-  selectedCount = candidates.length;
-  $('sum-count').textContent = candidates.length;
-  $('sum-size').textContent = data.total_human || fmt(data.total_bytes || 0);
-  selectAllBtn.disabled = candidates.length === 0;
-
-  const list = $('clean-list');
-  if (!candidates.length) {
-    teardownVirtualList(list);
-    list.dataset.count = '0';
-    list.innerHTML = '<div class="empty">Nothing disposable found.</div>';
-    updateSelection();
-    return;
-  }
-  let max = 1;
-  for (let i = 0; i < candidates.length; i++) {
-    const sz = candidates[i].size || 0;
-    if (sz > max) max = sz;
-  }
-  const tpl = renderClean._tpl || (renderClean._tpl = (() => {
+function renderAnalyzeTpl() {
+  return renderAnalyzeTpl._tpl || (renderAnalyzeTpl._tpl = (() => {
     const t = document.createElement('template');
-    t.innerHTML = '<label class="row"><input type="checkbox" /><div class="row-main"><div class="row-label"></div><div class="row-path"></div><div class="bar"><i></i></div></div><div class="row-size"></div></label>';
+    t.innerHTML = '<div class="row"><div class="row-main"><div class="row-label"></div><div class="row-path"></div><div class="bar"><i></i></div></div><div class="row-size"></div></div>';
     return t;
   })());
-  mountVirtualList(
-    list,
-    candidates,
-    () => {
-      const row = tpl.content.firstElementChild.cloneNode(true);
-      const box = row.firstElementChild;
-      const main = box.nextElementSibling;
-      row._refs = {
-        box,
-        label: main.children[0],
-        path: main.children[1],
-        bar: main.children[2].firstElementChild,
-        size: main.nextElementSibling,
-      };
-      return row;
-    },
-    (row, c, i) => {
-      const r = row._refs;
-      r.box._idx = i;
-      r.box.checked = selectedMask[i] === 1;
-      r.label.textContent = c.label || c.path;
-      r.path.textContent = c.path;
-      r.bar.style.transform = `scaleX(${Math.max((c.size || 0) / max, 0.02)})`;
-      r.size.textContent = c.size_human || c._sizeStr || (c._sizeStr = fmt(c.size));
-    },
-  );
-  updateSelection();
 }
-
-const sumSelectedEl = $('sum-selected');
-const applyCleanBtn = $('apply-clean');
-const selectAllBtn = $('select-all');
-
-$('clean-list').addEventListener('change', (e) => {
-  const target = e.target;
-  if (target && target.tagName === 'INPUT' && target.type === 'checkbox') {
-    const n = target._idx;
-    const next = target.checked ? 1 : 0;
-    if (selectedMask[n] !== next) {
-      selectedMask[n] = next;
-      selectedCount += next ? 1 : -1;
-      updateSelection();
-    }
-  }
-});
-
-function updateSelection() {
-  sumSelectedEl.textContent = selectedCount;
-  applyCleanBtn.disabled = selectedCount === 0;
-  selectAllBtn.textContent = selectedCount === candidates.length ? 'Deselect all' : 'Select all';
-}
-
-$('scan-clean').addEventListener('click', async () => {
-  const btn = $('scan-clean');
-  btn.disabled = true; btn.textContent = 'Scanning…';
-  try {
-    renderClean(await invoke('scan_clean'));
-  } catch (e) {
-    toast(String(e), true);
-  } finally {
-    btn.disabled = false; btn.textContent = 'Scan for junk';
-  }
-});
-
-$('select-all').addEventListener('click', () => {
-  const checkAll = selectedCount !== candidates.length;
-  selectedMask.fill(checkAll ? 1 : 0);
-  selectedCount = checkAll ? candidates.length : 0;
-  const pool = $('clean-list')._pool;
-  if (pool) {
-    for (let i = 0; i < pool.length; i++) {
-      if (pool[i]._idx >= 0) pool[i]._refs.box.checked = checkAll;
-    }
-  }
-  updateSelection();
-});
-
-$('apply-clean').addEventListener('click', async () => {
-  if (!selectedCount) return;
-  const paths = [];
-  let total = 0;
-  for (let i = 0; i < candidates.length; i++) {
-    if (selectedMask[i]) {
-      const item = candidates[i];
-      paths.push(item.path);
-      total += item.size || 0;
-    }
-  }
-  $('confirm-text').textContent = `${paths.length} item(s), about ${fmt(total)}, will be moved to the Recycle Bin. Only these exact paths are deleted.`;
-  const dlg = $('confirm-dialog');
-  dlg.returnValue = '';
-  dlg.showModal();
-  const choice = await new Promise((resolve) => {
-    dlg.addEventListener('close', () => resolve(dlg.returnValue), { once: true });
-  });
-  if (choice !== 'yes') return;
-
-  const btn = $('apply-clean');
-  btn.disabled = true; btn.textContent = 'Cleaning…';
-  try {
-    const events = await invoke('apply_clean', { paths });
-    const panel = $('result-panel');
-    panel.hidden = false;
-    let removed = 0;
-    const failed = [];
-    for (const ev of events) {
-      if (ev.event === 'removed') removed++;
-      if (ev.event === 'failed') failed.push(ev.path);
-    }
-    const complete = failed.length === 0 && removed === paths.length;
-    const maxLog = 200;
-    if (events.length <= maxLog) {
-      $('result-log').textContent = events.map((e) => JSON.stringify(e)).join('\n');
-    } else {
-      const head = events.slice(0, 100).map((e) => JSON.stringify(e));
-      const tail = events.slice(-50).map((e) => JSON.stringify(e));
-      $('result-log').textContent = `${head.join('\n')}\n… (${events.length - 150} more events omitted) …\n${tail.join('\n')}`;
-    }
-    if (complete) {
-      $('result-status').textContent = `${removed} removed`;
-      $('result-status').className = 'pill ok';
-      toast(`Done — ${removed} item(s) moved to the Recycle Bin.`);
-      selectedCount = 0;
-      renderClean({ items: [], total_bytes: 0, total_human: '0 B' });
-    } else {
-      let missedPaths = failed;
-      if (!missedPaths.length) {
-        const removedSet = new Set();
-        for (const ev of events) {
-          if (ev.event === 'removed') removedSet.add(ev.path);
-        }
-        missedPaths = paths.filter((p) => !removedSet.has(p));
-      }
-      // Keep only what actually failed. Removed paths no longer exist, and the
-      // backend refuses a batch containing a missing path.
-      const retry = new Set(missedPaths);
-      let nextCount = 0;
-      for (let i = 0; i < candidates.length; i++) {
-        if (selectedMask[i] && retry.has(candidates[i].path)) {
-          selectedMask[i] = 1;
-          nextCount++;
-        } else {
-          selectedMask[i] = 0;
-        }
-      }
-      selectedCount = nextCount;
-      const pool = $('clean-list')._pool;
-      if (pool) {
-        for (let i = 0; i < pool.length; i++) {
-          const row = pool[i];
-          if (row._idx >= 0) row._refs.box.checked = selectedMask[row._idx] === 1;
-        }
-      }
-      updateSelection();
-      $('result-status').textContent = `${removed} of ${paths.length} removed — incomplete`;
-      $('result-status').className = 'pill bad';
-      const shown = missedPaths.slice(0, 5).join(', ');
-      const extra = missedPaths.length > 5 ? ` (+${missedPaths.length - 5} more)` : '';
-      toast(`Incomplete — could not remove: ${shown}${extra}. Only those remain selected for a retry.`, true);
-    }
-  } catch (e) {
-    $('result-panel').hidden = false;
-    $('result-status').textContent = 'failed';
-    $('result-status').className = 'pill bad';
-    $('result-log').textContent = String(e);
-    toast(String(e), true);
-  } finally {
-    btn.disabled = false; btn.textContent = 'Clean selected';
-  }
-});
 
 $('scan-analyze').addEventListener('click', async () => {
   const path = $('analyze-path').value.trim();
@@ -501,23 +825,13 @@ $('scan-analyze').addEventListener('click', async () => {
       return;
     }
     let max = 1;
-    for (let i = 0; i < entries.length; i++) {
-      const sz = entries[i].size || 0;
-      if (sz > max) max = sz;
-    }
+    for (let i = 0; i < entries.length; i++) max = Math.max(max, entries[i].size || 0);
     const tpl = renderAnalyzeTpl();
-    mountVirtualList(
-      list,
-      entries,
+    mountVirtualList(list, entries,
       () => {
         const row = tpl.content.firstElementChild.cloneNode(true);
         const main = row.firstElementChild;
-        row._refs = {
-          label: main.children[0],
-          path: main.children[1],
-          bar: main.children[2].firstElementChild,
-          size: main.nextElementSibling,
-        };
+        row._refs = { label: main.children[0], path: main.children[1], bar: main.children[2].firstElementChild, size: main.nextElementSibling };
         return row;
       },
       (row, e) => {
@@ -526,8 +840,7 @@ $('scan-analyze').addEventListener('click', async () => {
         r.path.textContent = e.path;
         r.bar.style.transform = `scaleX(${Math.max((e.size || 0) / max, 0.02)})`;
         r.size.textContent = e._sizeStr || (e._sizeStr = e.is_dir ? fmt(e.size) + '  ▸' : fmt(e.size));
-      },
-    );
+      });
   } catch (e) {
     toast(String(e), true);
   } finally {
@@ -535,7 +848,7 @@ $('scan-analyze').addEventListener('click', async () => {
   }
 });
 
-// FIND — fff-backed fuzzy search over one user-picked folder.
+/* ===================== FIND ===================== */
 let findHits = [];
 let findSelected = new Set();
 let findBase = '';
@@ -553,7 +866,6 @@ function renderFind(data) {
   $('find-summary').textContent = `${data.total_matched} match(es) of ${data.total_files} indexed`;
   $('find-select-all').disabled = findHits.length === 0;
   $('find-select-all').textContent = 'Select all';
-
   const list = $('find-list');
   list.innerHTML = '';
   if (!findHits.length) {
@@ -588,15 +900,14 @@ function renderFind(data) {
 
 function updateFindSelection() {
   $('find-clean').disabled = findSelected.size === 0;
-  $('find-select-all').textContent =
-    findHits.length && findSelected.size === findHits.length ? 'Deselect all' : 'Select all';
+  $('find-select-all').textContent = findHits.length && findSelected.size === findHits.length ? 'Deselect all' : 'Select all';
 }
 
 async function runFindSearch() {
   const seq = ++findSeq;
   try {
     const data = await invoke('find_search', { query: $('find-query').value, limit: 100 });
-    if (seq === findSeq) renderFind(data); // drop stale responses while typing
+    if (seq === findSeq) renderFind(data);
   } catch (e) {
     toast(String(e), true);
   }
@@ -653,7 +964,6 @@ $('find-clean').addEventListener('click', async () => {
     dlg.addEventListener('close', () => resolve(dlg.returnValue), { once: true });
   });
   if (choice !== 'yes') return;
-
   const btn = $('find-clean');
   btn.disabled = true; btn.textContent = 'Cleaning…';
   try {
@@ -675,6 +985,7 @@ $('find-clean').addEventListener('click', async () => {
   }
 });
 
+/* ===================== STATUS ===================== */
 $('refresh-status').addEventListener('click', async () => {
   try {
     const data = await invoke('system_status');
@@ -705,6 +1016,7 @@ $('refresh-status').addEventListener('click', async () => {
   }
 });
 
+/* ===================== OPTIMIZE ===================== */
 $('preview-optimize').addEventListener('click', async () => {
   try {
     const data = await invoke('preview_optimize');
@@ -724,6 +1036,7 @@ $('preview-optimize').addEventListener('click', async () => {
   } catch (e) { toast(String(e), true); }
 });
 
+/* ===================== UPDATES ===================== */
 const UPDATE_EVENT = 'scour://update-progress';
 let updateAvailable = null;
 
@@ -811,15 +1124,8 @@ $('install-update').addEventListener('click', async () => {
   }
 });
 
-function renderAnalyzeTpl() {
-  return renderAnalyzeTpl._tpl || (renderAnalyzeTpl._tpl = (() => {
-    const t = document.createElement('template');
-    t.innerHTML = '<div class="row"><div class="row-main"><div class="row-label"></div><div class="row-path"></div><div class="bar"><i></i></div></div><div class="row-size"></div></div>';
-    return t;
-  })());
-}
-
 (async function init() {
+  runScan();
   try {
     const v = await invoke('engine_version');
     $('about-version').textContent = v.version || 'unknown';

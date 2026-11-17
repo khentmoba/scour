@@ -10,7 +10,7 @@
   <div class="app">
     <aside class="sidebar">
       <div class="brand">
-        <div class="brand-mark">S</div>
+        <img class="brand-logo" src="./logo.svg" alt="" />
         <div>
           <div class="brand-name">Scour</div>
           <div class="brand-sub">disk hygiene</div>
@@ -19,6 +19,7 @@
 
       <nav class="nav" id="nav">
         <button class="nav-item active" data-view="clean"><span class="nav-ico">✦</span> Clean</button>
+        <button class="nav-item" data-view="apps"><span class="nav-ico">▦</span> Apps</button>
         <button class="nav-item" data-view="analyze"><span class="nav-ico">◫</span> Analyze</button>
         <button class="nav-item" data-view="find"><span class="nav-ico">⌕</span> Find</button>
         <button class="nav-item" data-view="status"><span class="nav-ico">◉</span> Status</button>
@@ -33,40 +34,58 @@
     </aside>
 
     <main class="main">
-      <!-- CLEAN -->
+      <!-- CLEAN / OVERVIEW -->
       <section class="view active" id="view-clean">
-        <header class="view-head">
-          <div>
-            <div class="eyebrow">REVIEW FIRST</div>
-            <h1>Clean</h1>
-            <p class="lead">Scan for disposable files, tick what you trust, then delete only that list.</p>
+        <div class="disk-card">
+          <div class="disk-head">
+            <div>
+              <div class="used" id="disk-used">—</div>
+              <div class="of" id="disk-of">of — used</div>
+            </div>
+            <button class="btn ghost small" id="scan-clean">Rescan</button>
           </div>
-          <button class="btn primary" id="scan-clean">Scan for junk</button>
-        </header>
-
-        <div class="cards" id="clean-summary">
-          <div class="card"><div class="card-label">Candidates</div><div class="card-value" id="sum-count">—</div></div>
-          <div class="card"><div class="card-label">Reclaimable</div><div class="card-value" id="sum-size">—</div></div>
-          <div class="card"><div class="card-label">Selected</div><div class="card-value" id="sum-selected">0</div></div>
+          <canvas id="disk-bar" height="54" aria-label="Disk usage"></canvas>
+          <div class="legend" id="disk-legend"></div>
+          <div class="status-line"><span id="disk-status">Calculating…</span></div>
         </div>
 
-        <div class="panel">
-          <div class="panel-head">
-            <h2>Cleanup candidates</h2>
-            <button class="btn ghost small" id="select-all" disabled>Select all</button>
+        <div class="divider"></div>
+
+        <div class="cleanup">
+          <div class="cleanup-head">
+            <div>
+              <div class="cleanup-total" id="clean-total">—</div>
+              <div class="cleanup-sub" id="clean-sub">Looking for things you can clear</div>
+            </div>
+            <button class="btn primary" id="apply-clean" disabled>Clear</button>
           </div>
-          <div id="clean-list" class="list">
-            <div class="empty">Run a scan to see what can be cleaned.</div>
-          </div>
-          <div class="panel-foot">
-            <span class="hint" id="delete-mode">Deletes go to the Recycle Bin — nothing is permanent.</span>
-            <button class="btn danger" id="apply-clean" disabled>Clean selected</button>
-          </div>
+          <canvas id="treemap" height="340" aria-label="Cleanup candidates"></canvas>
+          <div class="cleanup-foot" id="clean-hint">Tick what you trust. Deletions go to the Recycle Bin.</div>
         </div>
+
+        <div id="item-tip" class="tip" hidden></div>
 
         <div class="panel" id="result-panel" hidden>
           <div class="panel-head"><h2>Last run</h2><span class="pill" id="result-status">—</span></div>
           <pre class="log" id="result-log"></pre>
+        </div>
+      </section>
+
+      <!-- APPS -->
+      <section class="view" id="view-apps">
+        <header class="view-head">
+          <div>
+            <div class="eyebrow">INSTALLED</div>
+            <h1>Apps</h1>
+            <p class="lead">What Windows has installed and how much space each one reports. Read-only — removing an app needs its own uninstaller.</p>
+          </div>
+          <button class="btn ghost small" id="apps-refresh">Refresh</button>
+        </header>
+        <div class="panel">
+          <div class="panel-head"><h2>Installed apps</h2><span class="pill" id="apps-count">—</span></div>
+          <div id="apps-list" class="list">
+            <div class="empty">Reading the Windows uninstall registry…</div>
+          </div>
         </div>
       </section>
 
