@@ -38,6 +38,17 @@ permanently erased.
 `status` and several maintenance tasks are macOS-only in the engine; on Windows the
 app shows the engine's own "unavailable" reason instead of faking a result.
 
+### Find (experimental)
+
+The **Find** view searches one folder you pick with
+[fff-search](https://github.com/dmtrKovalenko/fff) (MIT), linked into Scour as a
+Rust crate — no extra process. The folder is indexed once (a drive root is
+refused); after that every keystroke searches warm memory with typo-tolerant
+fuzzy matching and filters like `*.log` or `setup !keep/`. An empty query lists
+the largest files first. Ticked results go through the same reviewed-deletion
+guard and Recycle Bin path as the Clean view. The index lives only in memory
+for the current session; nothing is persisted and no content is read.
+
 ## Install and update
 
 Tagged releases (`v*`) are published by [`.github/workflows/release.yml`](.github/workflows/release.yml)
@@ -86,6 +97,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 
 - `dist/` — the frontend (plain HTML/CSS/JS, no bundler)
 - `src-tauri/src/engine.rs` — engine process wrapper and JSON parsing
+- `src-tauri/src/finder.rs` — fff-search index + fuzzy search for the Find view
 - `src-tauri/src/commands.rs` — Tauri commands exposed to the UI
 - `src-tauri/src/updater.rs` — in-app update checks, download progress and install
 - `src-tauri/binaries/` — bundled engine plus its license notices
@@ -105,7 +117,9 @@ workflow already receives.
 
 ## Licensing
 
-Scour's own code is [MIT](LICENSE). The bundled `burrow-engine` is © 2026 caezium
+Scour's own code is [MIT](LICENSE). It also links the MIT-licensed
+[fff-search](https://crates.io/crates/fff-search) crate (© 2026 Dmitriy Kovalenko)
+for the experimental Find view. The bundled `burrow-engine` is © 2026 caezium
 and licensed under **FSL-1.1-ALv2** — see `src-tauri/binaries/LICENSE.md` and
 `THIRD-PARTY-NOTICES.md`. Personal and internal use and redistribution are permitted
 under that license; a commercial product that competes with Burrow is not. The

@@ -1,10 +1,12 @@
 mod cleanup;
 mod commands;
 mod engine;
+mod finder;
 mod updater;
 
 use commands::EngineState;
 use engine::Engine;
+use finder::FinderState;
 use tauri::Manager;
 
 fn main() {
@@ -15,6 +17,7 @@ fn main() {
 
     tauri::Builder::default()
         .manage(EngineState(engine))
+        .manage(FinderState::default())
         .invoke_handler(tauri::generate_handler![
             commands::engine_version,
             commands::system_status,
@@ -22,6 +25,8 @@ fn main() {
             commands::analyze_dir,
             commands::preview_optimize,
             commands::apply_clean,
+            commands::find_index,
+            commands::find_search,
             updater::app_version,
             updater::check_update,
             updater::install_update,

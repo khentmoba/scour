@@ -98,6 +98,20 @@ function mockInvoke(cmd, args) {
       { name: 'notes.txt', path: args.path + '\\notes.txt', size: 12043, is_dir: false },
     ],
   }));
+  if (cmd === 'find_index') return wait().then(() => ({
+    base: args.folder, total_matched: 4, total_files: 4, items: [],
+  }));
+  if (cmd === 'find_search') {
+    const all = [
+      { path: args.folder + '\\setup-installer.exe', name: 'setup-installer.exe', size: 115800000, modified: 1750000000, score: 120 },
+      { path: args.folder + '\\nested\\old_backup.log', name: 'old_backup.log', size: 2048000, modified: 1740000000, score: 90 },
+      { path: args.folder + '\\draft-report.docx', name: 'draft-report.docx', size: 48210, modified: 1755000000, score: 60 },
+      { path: args.folder + '\\notes.txt', name: 'notes.txt', size: 12043, modified: 1756000000, score: 40 },
+    ];
+    const q = (args.query || '').trim().toLowerCase().replace(/^\*\./, '');
+    const items = q ? all.filter((f) => f.name.toLowerCase().includes(q.slice(0, Math.max(q.length - 1, 2)))) : all;
+    return wait().then(() => ({ base: args.folder, total_matched: items.length, total_files: 4, items }));
+  }
   if (cmd === 'apply_clean') return wait().then(() => [
     { event: 'removed', path: args.paths[0], bytes: 214700000 },
     { event: 'done', dry_run: false, freed_bytes: 214700000, count: args.paths.length },
@@ -291,6 +305,146 @@ $('scan-analyze').addEventListener('click', async () => {
     toast(String(e), true);
   } finally {
     btn.disabled = false; btn.textContent = 'Analyze folder';
+  }
+});
+
+// FIND — fff-backed fuzzy search over one user-picked folder.
+let findHits = [];
+let findSelected = new Set();
+let findBase = '';
+let findSeq = 0;
+
+function fmtDate(secs) {
+  if (!secs) return '';
+  return new Date(secs * 1000).toISOString().slice(0, 10);
+}
+
+function renderFind(data) {
+  findHits = data.items || [];
+  findBase = data.base || findBase;
+  findSelected = new Set();
+  $('find-summary').textContent = `${data.total_matched} match(es) of ${data.total_files} indexed`;
+  $('find-select-all').disabled = findHits.length === 0;
+  $('find-select-all').textContent = 'Select all';
+
+  const list = $('find-list');
+  list.innerHTML = '';
+  if (!findHits.length) {
+    list.innerHTML = '<div class="empty">No matches. Try fewer characters or a different spelling.</div>';
+    updateFindSelection();
+    return;
+  }
+  const max = Math.max(...findHits.map((h) => h.size || 0), 1);
+  findHits.forEach((h, i) => {
+    const row = document.createElement('label');
+    row.className = 'row';
+    row.innerHTML = `
+      <input type="checkbox" data-i="${i}" />
+      <div class="row-main">
+        <div class="row-label"></div>
+        <div class="row-path"></div>
+        <div class="bar"><i style="width:${Math.max((h.size || 0) / max * 100, 2)}%"></i></div>
+      </div>
+      <div class="row-size"></div>`;
+    row.querySelector('.row-label').textContent = h.name;
+    row.querySelector('.row-path').textContent = h.path + (h.modified ? '  ·  ' + fmtDate(h.modified) : '');
+    row.querySelector('.row-size').textContent = fmt(h.size);
+    row.querySelector('input').addEventListener('change', (e) => {
+      const n = Number(e.target.dataset.i);
+      e.target.checked ? findSelected.add(n) : findSelected.delete(n);
+      updateFindSelection();
+    });
+    list.appendChild(row);
+  });
+  updateFindSelection();
+}
+
+function updateFindSelection() {
+  $('find-clean').disabled = findSelected.size === 0;
+  $('find-select-all').textContent =
+    findHits.length && findSelected.size === findHits.length ? 'Deselect all' : 'Select all';
+}
+
+async function runFindSearch() {
+  const seq = ++findSeq;
+  try {
+    const data = await invoke('find_search', { query: $('find-query').value, limit: 100 });
+    if (seq === findSeq) renderFind(data); // drop stale responses while typing
+  } catch (e) {
+    toast(String(e), true);
+  }
+}
+
+$('find-index').addEventListener('click', async () => {
+  const folder = $('find-path').value.trim();
+  if (!folder) { toast('Enter a folder path first.', true); return; }
+  const btn = $('find-index');
+  btn.disabled = true; btn.textContent = 'Indexing…';
+  $('find-state').textContent = 'indexing…';
+  $('find-state').className = 'pill';
+  try {
+    const data = await invoke('find_index', { folder });
+    findBase = data.base;
+    $('find-query').disabled = false;
+    $('find-state').textContent = `${data.total_files} files indexed`;
+    $('find-state').className = 'pill ok';
+    $('find-query').focus();
+    await runFindSearch();
+  } catch (e) {
+    $('find-state').textContent = 'index failed';
+    $('find-state').className = 'pill bad';
+    toast(String(e), true);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Index folder';
+  }
+});
+
+let findDebounce;
+$('find-query').addEventListener('input', () => {
+  clearTimeout(findDebounce);
+  findDebounce = setTimeout(runFindSearch, 120);
+});
+
+$('find-select-all').addEventListener('click', () => {
+  if (findSelected.size === findHits.length) findSelected.clear();
+  else findHits.forEach((_, i) => findSelected.add(i));
+  document.querySelectorAll('#find-list input[type=checkbox]').forEach((box) => {
+    box.checked = findSelected.has(Number(box.dataset.i));
+  });
+  updateFindSelection();
+});
+
+$('find-clean').addEventListener('click', async () => {
+  const paths = [...findSelected].map((i) => findHits[i].path);
+  if (!paths.length) return;
+  const total = [...findSelected].reduce((s, i) => s + (findHits[i].size || 0), 0);
+  $('confirm-text').textContent = `${paths.length} item(s), about ${fmt(total)}, will be moved to the Recycle Bin. Only these exact paths are deleted.`;
+  const dlg = $('confirm-dialog');
+  dlg.returnValue = '';
+  dlg.showModal();
+  const choice = await new Promise((resolve) => {
+    dlg.addEventListener('close', () => resolve(dlg.returnValue), { once: true });
+  });
+  if (choice !== 'yes') return;
+
+  const btn = $('find-clean');
+  btn.disabled = true; btn.textContent = 'Cleaning…';
+  try {
+    const events = await invoke('apply_clean', { paths });
+    const removedPaths = events.filter((e) => e.event === 'removed').map((e) => e.path);
+    const failed = events.filter((e) => e.event === 'failed');
+    if (failed.length === 0 && removedPaths.length === paths.length) {
+      toast(`Done — ${removedPaths.length} item(s) moved to the Recycle Bin.`);
+      findHits = findHits.filter((h) => !removedPaths.includes(h.path));
+      renderFind({ base: findBase, total_matched: findHits.length, total_files: findHits.length, items: findHits });
+    } else {
+      toast(`Incomplete — could not remove: ${failed.map((e) => e.path).join(', ') || 'see log'}.`, true);
+      await runFindSearch();
+    }
+  } catch (e) {
+    toast(String(e), true);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Clean selected';
   }
 });
 
