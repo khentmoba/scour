@@ -1,5 +1,6 @@
 use crate::cleanup;
 use crate::engine::Engine;
+use crate::finder::FinderState;
 use serde_json::Value;
 use tauri::State;
 
@@ -46,4 +47,20 @@ pub fn preview_optimize(state: State<'_, EngineState>) -> Result<Value, String> 
 #[tauri::command]
 pub fn apply_clean(paths: Vec<String>) -> Result<Vec<Value>, String> {
     cleanup::delete_reviewed(&paths)
+}
+
+#[tauri::command]
+pub fn find_index(state: State<'_, FinderState>, folder: String) -> Result<Value, String> {
+    let data = crate::finder::index_folder(&state, &folder)?;
+    serde_json::to_value(data).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn find_search(
+    state: State<'_, FinderState>,
+    query: String,
+    limit: Option<usize>,
+) -> Result<Value, String> {
+    let data = crate::finder::search(&state, &query, limit.unwrap_or(100))?;
+    serde_json::to_value(data).map_err(|e| e.to_string())
 }

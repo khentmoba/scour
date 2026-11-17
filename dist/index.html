@@ -20,6 +20,7 @@
       <nav class="nav" id="nav">
         <button class="nav-item active" data-view="clean"><span class="nav-ico">✦</span> Clean</button>
         <button class="nav-item" data-view="analyze"><span class="nav-ico">◫</span> Analyze</button>
+        <button class="nav-item" data-view="find"><span class="nav-ico">⌕</span> Find</button>
         <button class="nav-item" data-view="status"><span class="nav-ico">◉</span> Status</button>
         <button class="nav-item" data-view="optimize"><span class="nav-ico">↻</span> Optimize</button>
         <button class="nav-item" data-view="update"><span class="nav-ico">↓</span> Updates</button>
@@ -85,6 +86,39 @@
           </div>
           <div id="analyze-list" class="list">
             <div class="empty">Choose a folder and run the analysis.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- FIND -->
+      <section class="view" id="view-find">
+        <header class="view-head">
+          <div>
+            <div class="eyebrow">FUZZY SEARCH · EXPERIMENTAL</div>
+            <h1>Find</h1>
+            <p class="lead">Index a folder once, then search it instantly — typos welcome. Tick what you trust; deletions go to the Recycle Bin.</p>
+          </div>
+        </header>
+
+        <div class="panel">
+          <div class="path-row">
+            <input id="find-path" type="text" spellcheck="false" placeholder="C:\Users\You\Downloads" />
+            <button class="btn primary" id="find-index">Index folder</button>
+          </div>
+          <div class="path-row">
+            <input id="find-query" type="text" spellcheck="false" placeholder="Search… e.g. instalr  ·  *.log  ·  setup !keep/" disabled />
+            <span class="pill" id="find-state">not indexed</span>
+          </div>
+          <div class="panel-head">
+            <h2 id="find-summary">Results</h2>
+            <button class="btn ghost small" id="find-select-all" disabled>Select all</button>
+          </div>
+          <div id="find-list" class="list">
+            <div class="empty">Index a folder to search it. Only the folder you pick is indexed — never a whole drive.</div>
+          </div>
+          <div class="panel-foot">
+            <span class="hint">Empty query shows the largest files. Deletes go to the Recycle Bin — nothing is permanent.</span>
+            <button class="btn danger" id="find-clean" disabled>Clean selected</button>
           </div>
         </div>
       </section>
