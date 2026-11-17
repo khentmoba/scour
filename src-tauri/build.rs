@@ -19,8 +19,16 @@ fn main() {
         .join("burrow-engine.exe");
     let dst = profile_dir.join("burrow-engine.exe");
     if src.is_file() {
-        if let Err(e) = fs::copy(&src, &dst) {
-            println!("cargo:warning=could not stage burrow-engine.exe: {e}");
+        let mut needs_copy = true;
+        if let (Ok(sm), Ok(dm)) = (fs::metadata(&src), fs::metadata(&dst)) {
+            if sm.len() == dm.len() && sm.modified().ok() == dm.modified().ok() {
+                needs_copy = false;
+            }
+        }
+        if needs_copy {
+            if let Err(e) = fs::copy(&src, &dst) {
+                println!("cargo:warning=could not stage burrow-engine.exe: {e}");
+            }
         }
     }
     println!("cargo:rerun-if-changed=binaries/burrow-engine.exe");

@@ -264,10 +264,14 @@ mod tests {
             seen.into_inner().unwrap(),
             vec![PathBuf::from(&target.path)]
         );
-        assert_eq!(events[0]["event"], "removed");
-        assert_eq!(events[0]["bytes"], 2048);
-        assert_eq!(events[1]["event"], "done");
-        assert_eq!(events[1]["ok"], true);
+        assert!(matches!(
+            events[0],
+            crate::cleanup::CleanEvent::Removed { bytes: 2048, .. }
+        ));
+        assert!(matches!(
+            events[1],
+            crate::cleanup::CleanEvent::Done { ok: true, .. }
+        ));
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -313,8 +317,14 @@ mod tests {
             .expect("typo search finds the installer");
 
         let events = crate::cleanup::delete_reviewed(&[target.path.clone()]).unwrap();
-        assert_eq!(events[0]["event"], "removed");
-        assert_eq!(events[1]["ok"], true);
+        assert!(matches!(
+            events[0],
+            crate::cleanup::CleanEvent::Removed { .. }
+        ));
+        assert!(matches!(
+            events[1],
+            crate::cleanup::CleanEvent::Done { ok: true, .. }
+        ));
         assert!(
             !Path::new(&target.path).exists(),
             "file must be gone from disk (now in the Recycle Bin)"
