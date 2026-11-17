@@ -2,9 +2,15 @@
 
 # Scour
 
-A small, review-first disk cleaner for Windows. It scans with the
-[Burrow](https://github.com/caezium/Burrow) engine, shows you exactly what it found,
-and deletes **only the items you tick** — to the Recycle Bin, by default.
+A small, review-first disk cleaner for Windows. The overview and clutter scan are
+implemented natively in Rust (inspired by the dithered disk bar and treemap of
+[Beautiful Disk](https://github.com/vkpdeveloper/beautifuldisk)); the bundled
+[Burrow](https://github.com/caezium/Burrow) engine is still used for its own CLI
+commands. Scour shows you exactly what it found and deletes **only the items you
+tick** — to the Recycle Bin, by default.
+
+The Beautiful Disk look and feature set were reimplemented from scratch in
+Scour's own Tauri/HTML stack. No source code was copied from that repository.
 
 Scour is a personal-use tool. It does not phone home, ask for elevation, or delete
 anything without an explicit confirmation in the UI.
@@ -23,7 +29,7 @@ map directly onto the engine's own CLI:
 
 | UI action | What runs |
 |---|---|
-| Scan for junk | `clean --dry-run` |
+| Scan for junk | Native Windows scan (caches, build output, old installers, clean worktrees) |
 | Analyze a folder | `analyze <path>` |
 | Preview maintenance | `optimize --dry-run` |
 | Clean selected | Scour moves exactly the ticked paths to the Recycle Bin |
@@ -95,7 +101,9 @@ cargo test --manifest-path src-tauri/Cargo.toml
 
 ## Layout
 
-- `dist/` — the frontend (plain HTML/CSS/JS, no bundler)
+- `dist/` — the frontend (plain HTML/CSS/JS, no bundler; dithered bar + treemap)
+- `assets/logo.svg` — the Scour mark, also used as the app icon and sidebar logo
+- `src-tauri/src/scanner.rs` — native Windows disk overview, clutter scan and app inventory
 - `src-tauri/src/engine.rs` — engine process wrapper and JSON parsing
 - `src-tauri/src/finder.rs` — fff-search index + fuzzy search for the Find view
 - `src-tauri/src/commands.rs` — Tauri commands exposed to the UI

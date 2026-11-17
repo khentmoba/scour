@@ -172,10 +172,10 @@ try {
   results.push({ suite: 'frontend', label: 'asset sizes (bytes)', ...sizes });
   console.log(`[frontend] assets: ${JSON.stringify(sizes)}`);
 
-  // --- render scaling (production renderClean via the scan button) ------------
+  // --- overview scaling (production scan_all -> dithered bar + treemap) --------
   await freshPage(baseUrl + '?render');
   await new Promise((r) => setTimeout(r, 600));
-  const sizesToTest = quick ? [100, 1000] : [100, 1000, 10000];
+  const sizesToTest = quick ? [100, 1000] : [100, 1000, 5000];
   for (const n of sizesToTest) {
     const reps = quick ? 2 : 3;
     const samples = [];
@@ -184,19 +184,25 @@ try {
       const m = await evaluate(`(async () => {
         const items = Array.from({length: ${n}}, (_, i) => ({
           path: 'C:\\\\bench\\\\item-' + i, label: 'Item ' + i,
-          size: 1024 * (i % 997), size_human: (i % 997) + 'KB'
+          category: i % 2 ? 'Caches' : 'Developer', bytes: 1024 * (i % 997),
+          human: (i % 997) + 'KB', detail: 'benchmark', removable: true
         }));
-        const total = items.reduce((s, x) => s + x.size, 0);
+        const total = items.reduce((s, x) => s + x.bytes, 0);
         window.__TAURI_INTERNALS__.invoke = async (cmd) => {
-          if (cmd === 'scan_clean') return { dry_run: true, total_bytes: total, total_human: 'x', items };
+          if (cmd === 'scan_all') return {
+            volume_total: 512 * 1024 ** 3, volume_used: 300 * 1024 ** 3,
+            disk: [{ name: 'Developer', bytes: 100 * 1024 ** 3, human: '100 GB' },
+                   { name: 'Caches', bytes: 50 * 1024 ** 3, human: '50 GB' }],
+            items, total_bytes: total, total_human: 'x', notes: [], scanned_at: 0
+          };
+          if (cmd === 'engine_version') return { version: '0.1.0', engine: 'burrow-engine' };
           throw new Error('unexpected ' + cmd);
         };
-        const list = document.getElementById('clean-list');
-        delete list.dataset.count;
-        list.innerHTML = '';
+        const totalEl = document.getElementById('clean-total');
+        totalEl.textContent = '—';
         const t0 = performance.now();
         document.getElementById('scan-clean').click();
-        while (Number(list.dataset.count) !== ${n} && list.children.length !== ${n}) {
+        while (totalEl.textContent === '—') {
           await new Promise(r => setTimeout(r, 1));
         }
         await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
@@ -208,20 +214,25 @@ try {
       domNodes = m.domNodes;
       heapMB = m.heapMB ?? 0;
     }
-    record(`renderClean ${n} rows (scan click -> list painted)`, samples, { dom_nodes: domNodes, heap_mb: round(heapMB) });
+    record(`overview ${n} items (scan click -> treemap painted)`, samples, { dom_nodes: domNodes, heap_mb: round(heapMB) });
 
-    // select-all / deselect-all on the populated list
+    // tile selection toggles through the canvas hit-test
     const selSamples = [];
     for (let r = 0; r < reps; r++) {
       const ms = await evaluate(`(() => {
         const t0 = performance.now();
-        document.getElementById('select-all').click();
-        document.getElementById('select-all').click();
+        const c = document.getElementById('treemap');
+        const box = c.getBoundingClientRect();
+        for (let i = 0; i < 12; i++) {
+          c.dispatchEvent(new MouseEvent('click', {
+            clientX: box.left + 12 + i * 40, clientY: box.top + 40, bubbles: true
+          }));
+        }
         return performance.now() - t0;
       })()`);
       selSamples.push(ms);
     }
-    record(`select-all toggle x2 on ${n} rows`, selSamples);
+    record(`treemap selection toggles x12 (${n} items)`, selSamples);
   }
 
   // --- analyze render ----------------------------------------------------------

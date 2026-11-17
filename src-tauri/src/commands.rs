@@ -125,3 +125,22 @@ pub fn find_search(
     let data = crate::finder::search(&state, &query, limit.unwrap_or(100))?;
     serde_json::to_value(data).map_err(|e| e.to_string())
 }
+
+/// Native Windows disk + clutter scan. Runs on a blocking thread because it
+/// walks the user profile; the UI shows progress while it is in flight.
+#[tauri::command]
+pub async fn scan_all() -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(crate::scanner::scan_all)
+        .await
+        .map_err(|e| format!("task join error: {e}"))
+        .and_then(|payload| serde_json::to_value(payload).map_err(|e| e.to_string()))
+}
+
+/// Read-only installed-app inventory from the Windows uninstall registry.
+#[tauri::command]
+pub async fn app_inventory() -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(crate::scanner::scan_apps)
+        .await
+        .map_err(|e| format!("task join error: {e}"))?
+        .and_then(|apps| serde_json::to_value(apps).map_err(|e| e.to_string()))
+}

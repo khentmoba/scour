@@ -2,6 +2,7 @@ mod cleanup;
 mod commands;
 mod engine;
 mod finder;
+mod scanner;
 mod updater;
 
 use commands::EngineState;
@@ -58,6 +59,8 @@ fn main() {
             commands::apply_clean,
             commands::find_index,
             commands::find_search,
+            commands::scan_all,
+            commands::app_inventory,
             commands::bench_first_frame,
             updater::app_version,
             updater::check_update,

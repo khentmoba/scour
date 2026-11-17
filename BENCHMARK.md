@@ -15,7 +15,7 @@ Use this file to detect regressions and track speedups across releases.
 
 ---
 
-## Baseline Environment (2026-11-17, Post-Fix Baseline — `235dc16`)
+## Baseline Environment (2026-11-17, Overview Port — current branch)
 
 | Spec | Value |
 |---|---|
@@ -25,8 +25,8 @@ Use this file to detect regressions and track speedups across releases.
 | **Disk** | Samsung SSD 980 500GB (SSD, NVMe) |
 | **Rust** | `rustc 1.93.0 (254b59607 2026-01-19)` |
 | **Node** | `v24.22.2` |
-| **Artifacts** | `scour.exe` = 12,050,944 bytes (~11.49 MiB) · `burrow-engine.exe` = 2,124,288 bytes (~2.0 MiB) |
-| **Frontend Assets** | `index.html` = 9,876 B · `main.js` = 31,943 B · `styles.css` = 7,504 B (49,323 B total) |
+| **Artifacts** | `scour.exe` = 12,123,648 bytes (~11.56 MiB) · `burrow-engine.exe` = 2,124,288 bytes (~2.0 MiB) |
+| **Frontend Assets** | `index.html` = 10,606 B · `main.js` = 46,182 B · `styles.css` = 10,059 B (66,847 B total) · `logo.svg` (dithered-disk mark) |
 
 ---
 
@@ -34,12 +34,12 @@ Use this file to detect regressions and track speedups across releases.
 
 | Metric | Min | Median | Max | Notes |
 |---|---:|---:|---:|---|
-| Release build (incremental no-op) | — | **67.69 s** | — | Parallel ThinLTO + `opt-level = "z"` + `rustls` |
-| Release build (app-crate rebuild) | — | **66.15 s** | — | Touch `src-tauri/src/main.rs` |
-| Startup: `engine_resolved` | 0.08 ms | **0.08 ms** | 0.09 ms | n=5 |
-| Startup: `setup` (WebView2 init) | 296.06 ms | **318.44 ms** | 332.45 ms | n=5 |
-| Startup: `first_frame` | 394.67 ms | **427.67 ms** | 522.89 ms | n=5 |
-| Startup: process wall time | 468.2 ms | **499.8 ms** | 887.7 ms | n=5 |
+| Release build (incremental no-op) | — | **85.42 s** | — | Added native scanner + app inventory; same ThinLTO/`opt-level = "z"`/`rustls` |
+| Release build (app-crate rebuild) | — | **83.39 s** | — | Touch `src-tauri/src/main.rs`; larger app crate |
+| Startup: `engine_resolved` | 0.08 ms | **0.08 ms** | 0.09 ms | n=3 (quick run) |
+| Startup: `setup` (WebView2 init) | 161.39 ms | **162.00 ms** | 191.19 ms | n=3 (quick run) |
+| Startup: `first_frame` | 227.03 ms | **232.98 ms** | 256.00 ms | n=3 (quick run; **427.67 → 232.98 ms**) |
+| Startup: process wall time | 290.7 ms | **301.9 ms** | 801.4 ms | n=3 (quick run) |
 
 ---
 
@@ -82,17 +82,14 @@ Use this file to detect regressions and track speedups across releases.
 
 | Metric | Iterations | Min | Median | Max | Details |
 |---|---:|---:|---:|---:|---|
-| Boot: `DOMContentLoaded` | 4 | 8.9 ms | **13.8 ms** | 135.6 ms | — |
-| Boot: `load` event | 4 | 10.1 ms | **15.8 ms** | 177.1 ms | — |
-| Boot: `first-paint` | 4 | 24.0 ms | **36.0 ms** | 188.0 ms | — |
-| `renderClean` 100 rows (click → painted) | 3 | 21.5 ms | **32.3 ms** | 32.4 ms | 256 DOM nodes · 2.21 MB heap |
-| `select-all` toggle ×2 on 100 rows | 3 | 0.0 ms | **0.0 ms** | 0.2 ms | Cached DOM refs |
-| `renderClean` 1,000 rows (click → painted) | 3 | 30.3 ms | **31.8 ms** | 32.5 ms | 256 DOM nodes · 2.44 MB heap |
-| `select-all` toggle ×2 on 1,000 rows | 3 | 0.0 ms | **0.0 ms** | 0.1 ms | `Uint8Array` mask |
-| `renderClean` 10,000 rows (click → painted) | 3 | 25.8 ms | **30.5 ms** | 30.8 ms | **256 DOM nodes** · 5.51 MB heap |
-| `select-all` toggle ×2 on 10,000 rows | 3 | 0.1 ms | **0.1 ms** | 0.1 ms | `Uint8Array` mask |
-| `analyze` render 2,000 entries (click → painted) | 3 | 30.3 ms | **32.0 ms** | 32.7 ms | Pooled virtualizer |
-| Idle page metrics (post-bench) | 1 | — | — | — | **334 DOM nodes** · 6.04 MB heap |
+| Boot: `DOMContentLoaded` | 2 | — | **183.7 ms** | — | quick run, cold Edge profile |
+| Boot: `load` event | 2 | — | **225.3 ms** | — | quick run, cold Edge profile |
+| Boot: `first-paint` | 2 | — | **232.0 ms** | — | quick run, cold Edge profile |
+| Overview 100 items (scan click → treemap painted) | 2 | — | **48.8 ms** | — | dithered bar + treemap canvas |
+| Treemap selection toggles ×12 (100 items) | 2 | — | **76 ms** | — | canvas hit-test |
+| Overview 1,000 items (scan click → treemap painted) | 2 | — | **49.8 ms** | — | cost independent of item count |
+| Treemap selection toggles ×12 (1,000 items) | 2 | — | **96 ms** | — | canvas hit-test |
+| `analyze` render 500 entries (click → painted) | 2 | — | **31.6 ms** | — | pooled virtualizer |
 
 ---
 
@@ -111,4 +108,5 @@ Use this file to detect regressions and track speedups across releases.
 | Round 8 | Scoped absolute positioning to `.list-viewport > .row` (fixing `#optimize-list` stacking + GPU layer bloat); `visibility: hidden` for pooled rows; `safe_ancestors.contains` pre-check + `is_blocked_part` in `forbidden()`; single `is_newer` parse + typed `DownloadedProgress`/`InstallResult` in `updater.rs` | `engine.version()`: **17.91 ms**; JSON raw 10k: **0.77 ms**; `tree_size`: **0.89 ms**; `select-all` 1k: **0.0 ms**; fixed `#optimize-list` layout |
 | Round 9 | `opt-level = "s"` on root `scour` crate; direct single-path `trash::delete` in `delete_bisect`; removed `uncached` `Vec` in `has_link_in_ancestors`; deduplicated `Engine::resolve` fallback; lazy `app_version` IPC on Updates tab | `scour.exe`: **5.09 MiB → 4.04 MiB** (-20.6%, **-66.4%** vs baseline); Recycle 1k: **4,575.86 ms** (**4.58 ms/file**); `validate` 1k: **22.95 ms**; rebuild: **18.50 s** |
 | Round 10 | `normalize_lexical` in `cached_home()` *(reverted to `fs::canonicalize` in `235dc16`)*; `<= 8` threshold in `delete_bisect`; `bytes == 0` fast-path in `humansize`; `opt-level = "z"` in `[profile.release]`; `targets = ["nsis"]` *(reverted to `["nsis", "msi"]` in `235dc16`)*; eliminated forced reflow & detached-row `appendChild` in `mountVirtualList` | `scour.exe`: **4.04 MiB → 3.66 MiB**; Recycle 1k: **4,558.98 ms** (**4.56 ms/file**, **3.70x** vs initial); `validate` 1k: **22.87 ms** (**14.7x** vs initial); rebuild: **16.44 s** |
+| Overview Port (current branch) | Clean-room Beautiful Disk UI + native Windows scanner: dithered disk bar, 3×3 legend, byte-sized treemap with review-first selection, `scan_all` / `app_inventory` commands, generated SVG logo + regenerated icon set, re-targeted frontend benchmark | Startup `first_frame`: **427.67 ms → 232.98 ms**; new scan finds many real clutter items on Windows (previously 1 cache item); cost of extra code: `scour.exe` **11.49 → 11.56 MiB**, app-crate rebuild **66.15 → 83.39 s**; frontend asset total **49.3 → 66.8 KB** |
 | Safety & Correctness (`235dc16`) | Reverted lexical-only/fast-path shortcuts for correctness: restored unconditional `fs::canonicalize` in `validate_borrowed`, `cached_home()`, and `cached_exe_dir()` (and removed `path_len` guards in `forbidden_roots`) to block 8.3/junction/case bypasses; restored `reqwest` `rustls` (for HTTPS), unconditional `build.rs` sidecar copy, and `targets = ["nsis", "msi"]` | `scour.exe`: **11.49 MiB** (`12,050,944 B`); `validate` 1k: **73.08 ms** (**4.6x** vs initial `337 ms`); refuse path: **0.08 ms**; app-crate rebuild: **66.15 s** (`20261117-201730`) |
